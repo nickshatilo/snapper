@@ -68,7 +68,6 @@ struct SettingsView: View {
                         captureBehaviorSection(appState: $appState)
                     case .overlay:
                         overlaySection(appState: $appState)
-                        floatingSection(appState: $appState)
                     case .history:
                         historyStorageSection(appState: $appState)
                         historyRetentionSection(appState: $appState)
@@ -79,13 +78,20 @@ struct SettingsView: View {
                         aboutSection
                     }
                 }
+                .frame(maxWidth: 540, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 18)
             }
+
+            Divider()
+
+            footer
         }
         .frame(width: 680, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
+            syncLaunchAtLoginState()
             calculateStorageSize()
         }
         .onChange(of: selectedTab) { _, tab in
@@ -95,31 +101,55 @@ struct SettingsView: View {
         }
     }
 
+    private var footer: some View {
+        HStack {
+            Spacer()
+            HStack(spacing: 4) {
+                Text("Made by Nick Shatilo")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text("•")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Link("nickshatilo.com", destination: URL(string: "https://nickshatilo.com")!)
+                    .font(.caption2)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 7)
+        .padding(.horizontal, 12)
+        .background(.bar)
+    }
+
     private var tabStrip: some View {
-        HStack(spacing: 8) {
-            ForEach(SettingsTab.allCases) { tab in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        selectedTab = tab
+        HStack {
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                ForEach(SettingsTab.allCases) { tab in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selectedTab = tab
+                        }
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: tab.iconName)
+                                .font(.system(size: 17, weight: .semibold))
+                            Text(tab.title)
+                                .font(.caption)
+                        }
+                        .foregroundStyle(selectedTab == tab ? .primary : .secondary)
+                        .frame(width: 86, height: 48)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(selectedTab == tab ? Color.primary.opacity(0.12) : Color.clear)
+                        )
                     }
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tab.iconName)
-                            .font(.system(size: 17, weight: .semibold))
-                        Text(tab.title)
-                            .font(.caption)
-                    }
-                    .foregroundStyle(selectedTab == tab ? .primary : .secondary)
-                    .frame(width: 86, height: 48)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(selectedTab == tab ? Color.primary.opacity(0.12) : Color.clear)
-                    )
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func systemSection(appState: Bindable<AppState>) -> some View {
@@ -127,18 +157,14 @@ struct SettingsView: View {
             ToggleRow(
                 title: "Launch at Login",
                 subtitle: "Automatically opens Snapper when your Mac starts.",
-                isOn: appState.launchAtLogin
-            ) { enabled in
-                setLaunchAtLogin(enabled)
-            }
+                isOn: launchAtLoginBinding(appState: appState)
+            )
 
             ToggleRow(
                 title: "Show Menu Bar Icon",
                 subtitle: "Keep Snapper available from the menu bar at all times.",
-                isOn: appState.menuBarVisible
-            ) { isVisible in
-                NotificationCenter.default.post(name: .menuBarVisibilityChanged, object: isVisible)
-            }
+                isOn: menuBarVisibilityBinding(appState: appState)
+            )
         }
     }
 
@@ -149,6 +175,25 @@ struct SettingsView: View {
                 subtitle: "Play a shutter sound after each successful capture.",
                 isOn: appState.captureSound
             )
+
+            if appState.captureSound.wrappedValue {
+                RowWithTrailingControl(title: "Capture Sound") {
+                    HStack(spacing: 8) {
+                        Picker("Capture Sound", selection: appState.captureSoundName) {
+                            ForEach(CaptureSound.allCases, id: \.self) { sound in
+                                Text(sound.displayName).tag(sound)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+
+                        Button("Preview") {
+                            SoundPlayer.playCapture(appState.captureSoundName.wrappedValue)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
 
             ToggleRow(
                 title: "Copy to Clipboard",
@@ -266,37 +311,11 @@ struct SettingsView: View {
                 }
                 .labelsHidden()
                 .frame(width: 170)
-                .onChange(of: appState.overlayCorner.wrappedValue) { _, _ in
-                    NotificationCenter.default.post(name: .overlayCornerChanged, object: nil)
-                }
             }
 
             Text("Preview thumbnails stay visible until you dismiss them.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private func floatingSection(appState: Bindable<AppState>) -> some View {
-        SettingsSection(title: "Floating Screenshots") {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    Text("Default Opacity")
-                    Spacer()
-                    Slider(value: appState.defaultPinnedOpacity, in: 0.1...1.0)
-                        .frame(width: 180)
-                        .onChange(of: appState.defaultPinnedOpacity.wrappedValue) { _, _ in
-                            NotificationCenter.default.post(name: .pinnedOpacityChanged, object: nil)
-                        }
-                    Text("\(Int(appState.defaultPinnedOpacity.wrappedValue * 100))%")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 42, alignment: .trailing)
-                }
-                Text("Applies immediately to existing pinned screenshots.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -410,6 +429,29 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
     }
 
+    private func launchAtLoginBinding(appState: Bindable<AppState>) -> Binding<Bool> {
+        Binding(
+            get: { appState.launchAtLogin.wrappedValue },
+            set: { enabled in
+                setLaunchAtLogin(enabled)
+            }
+        )
+    }
+
+    private func menuBarVisibilityBinding(appState: Bindable<AppState>) -> Binding<Bool> {
+        Binding(
+            get: { appState.menuBarVisible.wrappedValue },
+            set: { isVisible in
+                appState.menuBarVisible.wrappedValue = isVisible
+                NotificationCenter.default.post(name: .menuBarVisibilityChanged, object: isVisible)
+            }
+        )
+    }
+
+    private func syncLaunchAtLoginState() {
+        appState.launchAtLogin = (SMAppService.mainApp.status == .enabled)
+    }
+
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {
@@ -420,6 +462,7 @@ struct SettingsView: View {
         } catch {
             print("Failed to set launch at login: \(error)")
         }
+        syncLaunchAtLoginState()
     }
 
     private func calculateStorageSize() {
@@ -467,6 +510,7 @@ private struct SettingsSection<Content: View>: View {
         .overlay(alignment: .bottom) {
             if drawsDivider {
                 Divider()
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -491,13 +535,17 @@ private struct ToggleRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Toggle(title, isOn: $isOn)
-                .fontWeight(.medium)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .fontWeight(.medium)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .toggleStyle(.checkbox)
         .onChange(of: isOn) { _, newValue in
             onChange?(newValue)
         }
@@ -509,11 +557,13 @@ private struct RowWithTrailingControl<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Text(title)
                 .fontWeight(.medium)
-            Spacer()
+                .frame(width: 150, alignment: .leading)
             content
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -34,9 +34,23 @@ final class ScrollingCaptureController {
 
     @MainActor
     private func performScrollingCapture(rect: CGRect, options: CaptureOptions) async {
+        if !PermissionChecker.isAccessibilityGranted() {
+            let granted = PermissionChecker.requestAccessibility()
+            if !granted {
+                PermissionChecker.openAccessibilitySettings()
+                return
+            }
+        }
+
         var capturedImages: [CGImage] = []
         let maxScrolls = 20
         let scrollDelay: UInt64 = 500_000_000 // 0.5 seconds
+        let scrollPoint = CGPoint(x: rect.midX, y: rect.midY)
+        var unchangedFrameCount = 0
+
+        // Bring the target content under the selected area into focus once.
+        let targetPID = ScrollSimulator.focus(at: scrollPoint)
+        try? await Task.sleep(nanoseconds: 250_000_000)
 
         for _ in 0..<maxScrolls {
             do {
@@ -49,12 +63,22 @@ final class ScrollingCaptureController {
                     let curr = capturedImages[capturedImages.count - 1]
                     if imagesAreSimilar(prev, curr) {
                         capturedImages.removeLast()
-                        break
+                        unchangedFrameCount += 1
+
+                        // Retry with a stronger fallback before deciding we reached the end.
+                        if unchangedFrameCount >= 3 {
+                            break
+                        }
+
+                        _ = ScrollSimulator.pageDown(targetPID: targetPID)
+                        try await Task.sleep(nanoseconds: scrollDelay)
+                        continue
                     }
+                    unchangedFrameCount = 0
                 }
 
                 // Scroll down
-                ScrollSimulator.scrollDown(amount: Int(rect.height * 0.8))
+                _ = ScrollSimulator.scrollDown(amount: 12, at: scrollPoint, targetPID: targetPID)
                 try await Task.sleep(nanoseconds: scrollDelay)
             } catch {
                 if let captureError = error as? CaptureError, captureError == .permissionDenied {
@@ -66,31 +90,48 @@ final class ScrollingCaptureController {
             }
         }
 
-        guard capturedImages.count >= 2 else {
-            if let single = capturedImages.first {
-                let result = CaptureResult(image: single, mode: .scrolling, timestamp: Date(), sourceRect: rect, windowName: nil, applicationName: nil)
-                NotificationCenter.default.post(name: .captureCompleted, object: CaptureCompletedInfo(result: result, savedURL: nil))
-            }
+        guard let firstImage = capturedImages.first else {
+            print("Scrolling capture produced no frames")
             return
         }
 
-        // Stitch images
-        if let stitched = ImageStitcher.stitch(capturedImages) {
-            let result = CaptureResult(image: stitched, mode: .scrolling, timestamp: Date(), sourceRect: rect, windowName: nil, applicationName: nil)
-
-            var savedURL: URL?
-            if options.saveToFile {
-                let filename = FileNameGenerator.generate(pattern: options.filenamePattern, mode: .scrolling)
-                let url = options.saveDirectory.appendingPathComponent(filename).appendingPathExtension(options.format.fileExtension)
-                if ImageUtils.save(stitched, to: url, format: options.format) {
-                    savedURL = url
-                }
-            }
-            if options.copyToClipboard {
-                PasteboardHelper.copyImage(stitched)
-            }
-            NotificationCenter.default.post(name: .captureCompleted, object: CaptureCompletedInfo(result: result, savedURL: savedURL))
+        let finalImage: CGImage
+        if capturedImages.count >= 2 {
+            finalImage = ImageStitcher.stitch(capturedImages) ?? firstImage
+        } else {
+            finalImage = firstImage
         }
+
+        let result = CaptureResult(
+            image: finalImage,
+            mode: .scrolling,
+            timestamp: Date(),
+            sourceRect: rect,
+            windowName: nil,
+            applicationName: nil
+        )
+
+        var savedURL: URL?
+        if options.saveToFile {
+            let filename = FileNameGenerator.generate(pattern: options.filenamePattern, mode: .scrolling)
+            let url = options.saveDirectory
+                .appendingPathComponent(filename)
+                .appendingPathExtension(options.format.fileExtension)
+            if ImageUtils.save(finalImage, to: url, format: options.format, jpegQuality: options.jpegQuality) {
+                savedURL = url
+            }
+        }
+        if options.copyToClipboard {
+            PasteboardHelper.copyImage(finalImage)
+        }
+        if options.playSound {
+            SoundPlayer.playCapture(options.captureSound)
+        }
+
+        NotificationCenter.default.post(
+            name: .captureCompleted,
+            object: CaptureCompletedInfo(result: result, savedURL: savedURL)
+        )
     }
 
     private func imagesAreSimilar(_ a: CGImage, _ b: CGImage) -> Bool {

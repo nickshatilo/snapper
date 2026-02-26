@@ -27,7 +27,6 @@ final class MenuBarMenu: NSMenu {
         addItem(NSMenuItem.separator())
 
         addItem(makeItem("Scrolling Capture", action: #selector(scrollingCapture), key: "", modifiers: []))
-        addItem(makeItem("OCR Text Recognition", action: #selector(ocrCapture), key: "", modifiers: []))
         addItem(makeItem("Timer Capture", action: #selector(timerCapture), key: "", modifiers: []))
 
         addItem(NSMenuItem.separator())
@@ -72,10 +71,6 @@ final class MenuBarMenu: NSMenu {
 
     @objc private func scrollingCapture() {
         NotificationCenter.default.post(name: .startCapture, object: CaptureMode.scrolling)
-    }
-
-    @objc private func ocrCapture() {
-        NotificationCenter.default.post(name: .startCapture, object: CaptureMode.ocr)
     }
 
     @objc private func timerCapture() {

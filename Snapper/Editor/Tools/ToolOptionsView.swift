@@ -1,12 +1,8 @@
+import AppKit
 import SwiftUI
 
 struct ToolOptionsView: View {
     @Bindable var toolManager: ToolManager
-    private let colorPresets: [NSColor] = [
-        .systemRed, .systemOrange, .systemYellow, .systemGreen,
-        .systemTeal, .systemBlue, .systemIndigo, .systemPurple,
-        .systemPink, .white, .black,
-    ]
 
     var body: some View {
         HStack(spacing: 16) {
@@ -19,22 +15,13 @@ struct ToolOptionsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                // Inline color swatches (avoid macOS detached color panel window)
                 HStack(spacing: 8) {
                     Text("Color:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    ForEach(Array(colorPresets.enumerated()), id: \.offset) { _, color in
-                        ColorSwatchButton(
-                            color: color,
-                            isSelected: isSelected(color: color)
-                        ) {
-                            toolManager.strokeColor = color
-                        }
-                    }
+                    InlineColorPickerButton(selectedColor: $toolManager.strokeColor)
                 }
 
-                // Stroke width
                 if showsStrokeWidth {
                     HStack(spacing: 4) {
                         Text("Width:")
@@ -48,7 +35,6 @@ struct ToolOptionsView: View {
                     }
                 }
 
-                // Tool-specific options
                 switch toolManager.currentTool {
                 case .arrow:
                     Picker("Style", selection: $toolManager.arrowStyle) {
@@ -138,42 +124,226 @@ struct ToolOptionsView: View {
             return false
         }
     }
+}
 
-    private func isSelected(color: NSColor) -> Bool {
-        guard let selected = toolManager.strokeColor.usingColorSpace(.deviceRGB),
-              let candidate = color.usingColorSpace(.deviceRGB) else { return false }
-        let tolerance: CGFloat = 0.02
-        return abs(selected.redComponent - candidate.redComponent) < tolerance &&
-            abs(selected.greenComponent - candidate.greenComponent) < tolerance &&
-            abs(selected.blueComponent - candidate.blueComponent) < tolerance
+private struct InlineColorPickerButton: View {
+    @Binding var selectedColor: NSColor
+    @State private var isPickerPresented = false
+
+    var body: some View {
+        Button {
+            isPickerPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color(nsColor: selectedColor))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .strokeBorder(Color.black.opacity(0.25), lineWidth: 1)
+                    }
+                    .frame(width: 26, height: 16)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPickerPresented, arrowEdge: .bottom) {
+            InlineHSBColorPicker(selectedColor: $selectedColor)
+                .padding(12)
+        }
     }
 }
 
-private struct ColorSwatchButton: View {
-    let color: NSColor
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var isHovering = false
+private struct InlineHSBColorPicker: View {
+    @Binding var selectedColor: NSColor
+    @State private var hue: CGFloat = 0
+    @State private var saturation: CGFloat = 1
+    @State private var brightness: CGFloat = 1
+    @State private var opacity: CGFloat = 1
+    @State private var isSynchronizing = false
 
     var body: some View {
-        Button(action: action) {
-            Circle()
-                .fill(Color(nsColor: color))
-                .frame(width: 16, height: 16)
-                .overlay {
-                    Circle()
-                        .strokeBorder(
-                            isSelected ? Color.accentColor : Color.black.opacity(isHovering ? 0.45 : 0.25),
-                            lineWidth: isSelected ? 2 : 1
-                        )
-                }
-                .scaleEffect(isHovering ? 1.08 : 1.0)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.12)) {
-                isHovering = hovering
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Pick Color")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            SaturationBrightnessField(
+                hue: hue,
+                saturation: $saturation,
+                brightness: $brightness
+            )
+            .frame(width: 180, height: 120)
+
+            HueField(hue: $hue)
+                .frame(width: 180, height: 14)
+
+            HStack(spacing: 8) {
+                Text("Opacity")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 48, alignment: .leading)
+                Slider(value: $opacity, in: 0...1)
+                    .frame(width: 110)
+                Text("\(Int(opacity * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 36, alignment: .trailing)
             }
+        }
+        .onAppear {
+            syncFromSelectedColor()
+        }
+        .onChange(of: hue) { _, _ in
+            applyColor()
+        }
+        .onChange(of: saturation) { _, _ in
+            applyColor()
+        }
+        .onChange(of: brightness) { _, _ in
+            applyColor()
+        }
+        .onChange(of: opacity) { _, _ in
+            applyColor()
+        }
+    }
+
+    private func syncFromSelectedColor() {
+        guard !isSynchronizing else { return }
+        isSynchronizing = true
+
+        let rgb = selectedColor.usingColorSpace(.deviceRGB) ?? selectedColor
+        var h: CGFloat = 0
+        var s: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 1
+        rgb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        hue = h
+        saturation = s
+        brightness = b
+        opacity = a
+
+        isSynchronizing = false
+    }
+
+    private func applyColor() {
+        guard !isSynchronizing else { return }
+        selectedColor = NSColor(
+            calibratedHue: clamp01(hue),
+            saturation: clamp01(saturation),
+            brightness: clamp01(brightness),
+            alpha: clamp01(opacity)
+        )
+    }
+
+    private func clamp01(_ value: CGFloat) -> CGFloat {
+        min(max(value, 0), 1)
+    }
+}
+
+private struct SaturationBrightnessField: View {
+    let hue: CGFloat
+    @Binding var saturation: CGFloat
+    @Binding var brightness: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+            let knobX = min(max(saturation * width, 0), width)
+            let knobY = min(max((1 - brightness) * height, 0), height)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: NSColor(calibratedHue: hue, saturation: 1, brightness: 1, alpha: 1)))
+
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.white, .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.clear, .black],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.95), lineWidth: 2)
+                    .background(Circle().fill(Color.clear))
+                    .frame(width: 12, height: 12)
+                    .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
+                    .position(x: knobX, y: knobY)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.28), lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let x = min(max(value.location.x, 0), width)
+                        let y = min(max(value.location.y, 0), height)
+                        saturation = width > 0 ? (x / width) : 0
+                        brightness = height > 0 ? (1 - y / height) : 1
+                    }
+            )
+        }
+    }
+}
+
+private struct HueField: View {
+    @Binding var hue: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let knobX = min(max(hue * width, 0), width)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.95), lineWidth: 2)
+                    .background(Circle().fill(Color.clear))
+                    .frame(width: 12, height: 12)
+                    .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
+                    .position(x: knobX, y: proxy.size.height / 2)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.28), lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let x = min(max(value.location.x, 0), width)
+                        hue = width > 0 ? (x / width) : 0
+                    }
+            )
         }
     }
 }

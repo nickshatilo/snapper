@@ -7,15 +7,27 @@ final class HotkeyManager {
     private var runLoopSource: CFRunLoopSource?
     private var retapTimer: Timer?
     private var permissionRetryTimer: Timer?
+    private var carbonHandlerRef: EventHandlerRef?
+    private var carbonHotKeyRefs: [UInt32: EventHotKeyRef] = [:]
+    private var carbonHotkeyActionsByID: [UInt32: HotkeyAction] = [:]
+    private var fallbackGlobalMonitor: Any?
+    private var fallbackLocalMonitor: Any?
     private var hasLoggedMissingPermission = false
     private var hasShownEventTapFailurePrompt = false
+    private let carbonSignature = OSType(0x534E5052) // "SNPR"
+
+    var hasActiveGlobalHotkeys: Bool {
+        eventTap != nil || !carbonHotKeyRefs.isEmpty
+    }
 
     init(appState: AppState) {
         self.appState = appState
     }
 
     func start() {
+        installCarbonHotkeysIfNeeded()
         installEventTapIfAllowed()
+        installFallbackMonitorsIfNeeded()
         startPermissionRetry()
     }
 
@@ -32,6 +44,15 @@ final class HotkeyManager {
         }
         eventTap = nil
         runLoopSource = nil
+        if let fallbackGlobalMonitor {
+            NSEvent.removeMonitor(fallbackGlobalMonitor)
+            self.fallbackGlobalMonitor = nil
+        }
+        if let fallbackLocalMonitor {
+            NSEvent.removeMonitor(fallbackLocalMonitor)
+            self.fallbackLocalMonitor = nil
+        }
+        unregisterCarbonHotkeys()
     }
 
     private func startPermissionRetry() {
@@ -105,26 +126,160 @@ final class HotkeyManager {
         }
     }
 
+    private func installFallbackMonitorsIfNeeded() {
+        if fallbackGlobalMonitor == nil {
+            fallbackGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.handleFallbackHotkey(event)
+            }
+        }
+        if fallbackLocalMonitor == nil {
+            fallbackLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.handleFallbackHotkey(event)
+                return event
+            }
+        }
+    }
+
+    private func installCarbonHotkeysIfNeeded() {
+        guard carbonHandlerRef == nil else { return }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: OSType(kEventHotKeyPressed)
+        )
+
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        let installStatus = InstallEventHandler(
+            GetEventDispatcherTarget(),
+            carbonHotkeyCallback,
+            1,
+            &eventType,
+            selfPtr,
+            &carbonHandlerRef
+        )
+
+        guard installStatus == noErr else {
+            print("Failed to install Carbon hotkey handler: \(installStatus)")
+            carbonHandlerRef = nil
+            return
+        }
+
+        registerCarbonHotkey(action: .captureFullscreen, id: 1)
+        registerCarbonHotkey(action: .captureArea, id: 2)
+    }
+
+    private func registerCarbonHotkey(action: HotkeyAction, id: UInt32) {
+        guard carbonHotKeyRefs[id] == nil else { return }
+        guard let keyCode = keyCodeForAction(action) else { return }
+
+        var hotKeyRef: EventHotKeyRef?
+        let hotKeyID = EventHotKeyID(signature: carbonSignature, id: id)
+        let status = RegisterEventHotKey(
+            keyCode,
+            UInt32(cmdKey | shiftKey),
+            hotKeyID,
+            GetEventDispatcherTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        guard status == noErr, let hotKeyRef else {
+            print("Failed to register Carbon hotkey for \(action): \(status)")
+            return
+        }
+
+        carbonHotKeyRefs[id] = hotKeyRef
+        carbonHotkeyActionsByID[id] = action
+    }
+
+    private func unregisterCarbonHotkeys() {
+        for (_, hotKeyRef) in carbonHotKeyRefs {
+            UnregisterEventHotKey(hotKeyRef)
+        }
+        carbonHotKeyRefs.removeAll()
+        carbonHotkeyActionsByID.removeAll()
+
+        if let carbonHandlerRef {
+            RemoveEventHandler(carbonHandlerRef)
+            self.carbonHandlerRef = nil
+        }
+    }
+
+    private func keyCodeForAction(_ action: HotkeyAction) -> UInt32? {
+        switch action {
+        case .captureFullscreen:
+            return UInt32(kVK_ANSI_3)
+        case .captureArea:
+            return UInt32(kVK_ANSI_4)
+        default:
+            return nil
+        }
+    }
+
+    fileprivate func handleCarbonHotkeyEvent(_ event: EventRef?) {
+        // Event tap has priority because it can suppress system screenshots.
+        if eventTap != nil {
+            return
+        }
+
+        guard let event else { return }
+        var hotKeyID = EventHotKeyID()
+        let status = GetEventParameter(
+            event,
+            EventParamName(kEventParamDirectObject),
+            EventParamType(typeEventHotKeyID),
+            nil,
+            MemoryLayout<EventHotKeyID>.size,
+            nil,
+            &hotKeyID
+        )
+
+        guard status == noErr, hotKeyID.signature == carbonSignature else { return }
+        guard let action = carbonHotkeyActionsByID[hotKeyID.id] else { return }
+        postAction(action)
+    }
+
+    private func handleFallbackHotkey(_ event: NSEvent) {
+        // Event tap has priority because it can suppress system screenshots.
+        if eventTap != nil {
+            return
+        }
+
+        let action = actionForHotkey(
+            keyCode: Int(event.keyCode),
+            hasCommand: event.modifierFlags.contains(.command),
+            hasShift: event.modifierFlags.contains(.shift)
+        )
+        guard let action else { return }
+        postAction(action)
+    }
+
+    private func postAction(_ action: HotkeyAction) {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .startCapture, object: action.captureMode)
+        }
+    }
+
+    private func actionForHotkey(keyCode: Int, hasCommand: Bool, hasShift: Bool) -> HotkeyAction? {
+        guard hasCommand && hasShift else { return nil }
+        switch keyCode {
+        case kVK_ANSI_3: return .captureFullscreen
+        case kVK_ANSI_4: return .captureArea
+        default: return nil
+        }
+    }
+
     fileprivate func handleKeyEvent(_ event: CGEvent) -> CGEvent? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
-        let hasCmd = flags.contains(.maskCommand)
-        let hasShift = flags.contains(.maskShift)
-
-        guard hasCmd && hasShift else { return event }
-
-        let action: HotkeyAction? = switch Int(keyCode) {
-        case kVK_ANSI_3: .captureFullscreen
-        case kVK_ANSI_4: .captureArea
-        default: nil
-        }
-
+        let action = actionForHotkey(
+            keyCode: Int(keyCode),
+            hasCommand: flags.contains(.maskCommand),
+            hasShift: flags.contains(.maskShift)
+        )
         guard let action else { return event }
-
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .startCapture, object: action.captureMode)
-        }
+        postAction(action)
 
         // Return nil to suppress the system screenshot
         return nil
@@ -156,4 +311,15 @@ private func hotkeyCallback(
         return Unmanaged.passUnretained(modifiedEvent)
     }
     return nil
+}
+
+private func carbonHotkeyCallback(
+    nextHandler: EventHandlerCallRef?,
+    event: EventRef?,
+    userData: UnsafeMutableRawPointer?
+) -> OSStatus {
+    guard let userData else { return noErr }
+    let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
+    manager.handleCarbonHotkeyEvent(event)
+    return noErr
 }

@@ -156,7 +156,7 @@ final class CaptureCoordinator {
 
         // Play sound
         if options.playSound {
-            SoundPlayer.playCapture()
+            SoundPlayer.playCapture(options.captureSound)
         }
 
         // Notify overlay

@@ -4,9 +4,12 @@ xcuserdata/
 
 # Build artifacts
 .build/
+.release-build/
 build/
 DerivedData/
 *.xcarchive
+
+dist/
 
 # macOS
 .DS_Store

@@ -1,8 +1,8 @@
+import AppKit
 import Foundation
 
 final class UpdateManager {
-    // Sparkle integration will be configured when the SPM package is added.
-    // For now, this is a placeholder that will wrap SPUStandardUpdaterController.
+    private let releasesURL = URL(string: "https://github.com/nickshatilo/snapper/releases")
 
     init() {
         NotificationCenter.default.addObserver(
@@ -15,14 +15,12 @@ final class UpdateManager {
     }
 
     func checkForUpdates() {
-        // TODO: Integrate Sparkle SPUStandardUpdaterController
-        // let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
-        // updaterController.checkForUpdates(nil)
-        print("Check for updates triggered (Sparkle not yet configured)")
+        guard let releasesURL else { return }
+        NSWorkspace.shared.open(releasesURL)
     }
 
     var automaticallyChecksForUpdates: Bool {
-        get { UserDefaults.standard.object(forKey: Constants.Keys.autoCheckUpdates) as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: Constants.Keys.autoCheckUpdates) as? Bool ?? false }
         set { UserDefaults.standard.set(newValue, forKey: Constants.Keys.autoCheckUpdates) }
     }
 }

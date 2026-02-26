@@ -10,9 +10,11 @@ struct OCRTextBlock: Identifiable, Hashable {
 enum TextRecognitionService {
     static func recognizeTextBlocks(in image: CGImage) async throws -> [OCRTextBlock] {
         try await withCheckedThrowingContinuation { continuation in
-            let originalWidth = CGFloat(image.width)
-            let originalHeight = CGFloat(image.height)
-            let ocrImage = downscaledImageIfNeeded(image) ?? image
+            let downscaled = downscaledImageIfNeeded(image)
+            let ocrImage = downscaled?.image ?? image
+            let scaleToOriginal = 1.0 / (downscaled?.scale ?? 1.0)
+            let ocrWidth = CGFloat(ocrImage.width)
+            let ocrHeight = CGFloat(ocrImage.height)
 
             let request = VNRecognizeTextRequest { request, error in
                 if let error {
@@ -21,34 +23,26 @@ enum TextRecognitionService {
                 }
 
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                let lineBlocks: [OCRTextBlock] = observations.compactMap { observation in
-                    guard let topCandidate = observation.topCandidates(1).first else { return nil }
-                    let text = topCandidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { return nil }
-
-                    let rect = imageRect(from: observation.boundingBox, width: originalWidth, height: originalHeight)
-                    guard rect.width > 1, rect.height > 1 else { return nil }
-                    return OCRTextBlock(text: text, imageRect: rect)
-                }
-                let detectedWordBlocks = observations.flatMap {
-                    wordBlocks(
+                let recognizedBlocks = observations.flatMap {
+                    blocksFromObservation(
                         from: $0,
-                        imageWidth: originalWidth,
-                        imageHeight: originalHeight
+                        ocrWidth: ocrWidth,
+                        ocrHeight: ocrHeight,
+                        scaleToOriginal: scaleToOriginal
                     )
                 }
-                let blocks = (detectedWordBlocks.isEmpty ? lineBlocks : detectedWordBlocks)
                     .sorted { lhs, rhs in
                         let yDelta = lhs.imageRect.midY - rhs.imageRect.midY
                         if abs(yDelta) > 6 { return yDelta > 0 }
                         return lhs.imageRect.minX < rhs.imageRect.minX
                     }
 
-                continuation.resume(returning: Array(blocks.prefix(2000)))
+                continuation.resume(returning: Array(recognizedBlocks.prefix(2000)))
             }
 
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
+            request.automaticallyDetectsLanguage = true
             request.minimumTextHeight = 0
 
             let handler = VNImageRequestHandler(cgImage: ocrImage, options: [:])
@@ -65,7 +59,7 @@ enum TextRecognitionService {
         return composeText(from: blocks)
     }
 
-    private static func downscaledImageIfNeeded(_ image: CGImage) -> CGImage? {
+    private static func downscaledImageIfNeeded(_ image: CGImage) -> (image: CGImage, scale: CGFloat)? {
         let maxDimension: CGFloat = 4800
         let width = CGFloat(image.width)
         let height = CGFloat(image.height)
@@ -88,22 +82,76 @@ enum TextRecognitionService {
 
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-        return context.makeImage()
+        guard let result = context.makeImage() else { return nil }
+        return (result, scale)
     }
 
-    private static func imageRect(from normalizedRect: CGRect, width: CGFloat, height: CGFloat) -> CGRect {
+    private static func imageRect(
+        from normalizedRect: CGRect,
+        width: CGFloat,
+        height: CGFloat,
+        scaleToOriginal: CGFloat = 1.0
+    ) -> CGRect {
         CGRect(
-            x: normalizedRect.minX * width,
-            y: normalizedRect.minY * height,
-            width: normalizedRect.width * width,
-            height: normalizedRect.height * height
+            x: normalizedRect.minX * width * scaleToOriginal,
+            y: normalizedRect.minY * height * scaleToOriginal,
+            width: normalizedRect.width * width * scaleToOriginal,
+            height: normalizedRect.height * height * scaleToOriginal
         ).integral
+    }
+
+    private static func blocksFromObservation(
+        from observation: VNRecognizedTextObservation,
+        ocrWidth: CGFloat,
+        ocrHeight: CGFloat,
+        scaleToOriginal: CGFloat
+    ) -> [OCRTextBlock] {
+        let wordLevel = wordBlocks(
+            from: observation,
+            imageWidth: ocrWidth,
+            imageHeight: ocrHeight,
+            scaleToOriginal: scaleToOriginal
+        )
+        if !wordLevel.isEmpty {
+            return wordLevel
+        }
+
+        guard let lineLevel = lineBlock(
+            from: observation,
+            imageWidth: ocrWidth,
+            imageHeight: ocrHeight,
+            scaleToOriginal: scaleToOriginal
+        ) else {
+            return []
+        }
+        return [lineLevel]
+    }
+
+    private static func lineBlock(
+        from observation: VNRecognizedTextObservation,
+        imageWidth: CGFloat,
+        imageHeight: CGFloat,
+        scaleToOriginal: CGFloat
+    ) -> OCRTextBlock? {
+        guard let topCandidate = observation.topCandidates(1).first else { return nil }
+        let text = topCandidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        let rect = imageRect(
+            from: observation.boundingBox,
+            width: imageWidth,
+            height: imageHeight,
+            scaleToOriginal: scaleToOriginal
+        )
+        guard rect.width > 1, rect.height > 1 else { return nil }
+        return OCRTextBlock(text: text, imageRect: rect)
     }
 
     private static func wordBlocks(
         from observation: VNRecognizedTextObservation,
         imageWidth: CGFloat,
-        imageHeight: CGFloat
+        imageHeight: CGFloat,
+        scaleToOriginal: CGFloat
     ) -> [OCRTextBlock] {
         guard let candidate = observation.topCandidates(1).first else { return [] }
 
@@ -120,7 +168,12 @@ enum TextRecognitionService {
             guard !word.isEmpty else { return }
             guard let box = try? candidate.boundingBox(for: swiftRange) else { return }
 
-            let rect = imageRect(from: box.boundingBox, width: imageWidth, height: imageHeight)
+            let rect = imageRect(
+                from: box.boundingBox,
+                width: imageWidth,
+                height: imageHeight,
+                scaleToOriginal: scaleToOriginal
+            )
             guard rect.width > 1, rect.height > 1 else { return }
             blocks.append(OCRTextBlock(text: word, imageRect: rect))
         }

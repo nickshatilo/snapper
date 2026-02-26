@@ -39,8 +39,21 @@ struct CaptureThumbnailView: View {
             }
         }
         .onDrag {
-            dragItemProvider()
+            let provider = dragItemProvider()
+            DispatchQueue.main.async {
+                manager.removeCapture(capture.id)
+            }
+            return provider
         }
+        .transition(
+            .asymmetric(
+                insertion: .offset(y: -12)
+                    .combined(with: .opacity)
+                    .combined(with: .scale(scale: 0.97, anchor: .top)),
+                removal: .offset(x: 20)
+                    .combined(with: .opacity)
+            )
+        )
     }
 
     private var actionButtons: some View {
@@ -55,10 +68,6 @@ struct CaptureThumbnailView: View {
             }
             OverlayIconButton(icon: "pencil", tooltip: "Edit") {
                 NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(capture.image))
-                manager.removeCapture(capture.id)
-            }
-            OverlayIconButton(icon: "pin", tooltip: "Pin") {
-                NotificationCenter.default.post(name: .pinScreenshot, object: ImageWrapper(capture.image))
                 manager.removeCapture(capture.id)
             }
             OverlayIconButton(icon: "trash", tooltip: "Delete") {

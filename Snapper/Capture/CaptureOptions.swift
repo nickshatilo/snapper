@@ -3,6 +3,7 @@ import Foundation
 struct CaptureOptions {
     var freezeScreen: Bool = false
     var playSound: Bool = false
+    var captureSound: CaptureSound = .glass
     var copyToClipboard: Bool = true
     var saveToFile: Bool = true
     var format: ImageFormat = .png
@@ -16,6 +17,7 @@ struct CaptureOptions {
         CaptureOptions(
             freezeScreen: appState.freezeScreen,
             playSound: appState.captureSound,
+            captureSound: appState.captureSoundName,
             copyToClipboard: appState.copyToClipboard,
             saveToFile: appState.saveToFile,
             format: appState.imageFormat,

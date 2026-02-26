@@ -6,6 +6,7 @@ enum Constants {
         static let menuBarVisible = "menuBarVisible"
         static let launchAtLogin = "launchAtLogin"
         static let captureSound = "captureSound"
+        static let captureSoundName = "captureSoundName"
         static let copyToClipboard = "copyToClipboard"
         static let saveToFile = "saveToFile"
         static let saveDirectory = "saveDirectory"

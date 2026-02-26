@@ -7,7 +7,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyManager: HotkeyManager?
     private var captureCoordinator: CaptureCoordinator?
     private var quickAccessManager: QuickAccessManager?
-    private var pinnedScreenshotManager: PinnedScreenshotManager?
     private var historyManager: HistoryManager?
     private var historyBrowserWindow: HistoryBrowserWindow?
     private var scrollingCaptureController: ScrollingCaptureController?
@@ -19,15 +18,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ensureSingleInstance()
+        ProcessInfo.processInfo.disableAutomaticTermination("Snapper should stay alive as a menu bar utility.")
 
         // Core services
         menuBarController = MenuBarController(appState: appState)
         hotkeyManager = HotkeyManager(appState: appState)
         captureCoordinator = CaptureCoordinator(appState: appState)
 
+        // Keep the app reachable even when hotkey permissions are missing.
+        if appState.menuBarVisible {
+            menuBarController?.show()
+        } else if PermissionChecker.isAccessibilityGranted() {
+            menuBarController?.hide()
+        } else {
+            appState.menuBarVisible = true
+            menuBarController?.show()
+        }
+
         // Overlay & Pinned
         quickAccessManager = QuickAccessManager(appState: appState)
-        pinnedScreenshotManager = PinnedScreenshotManager(appState: appState)
 
         // History
         historyManager = HistoryManager()
@@ -58,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         hotkeyManager?.start()
+        enforceReachability()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -70,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         // Retry enabling global hotkeys after users grant accessibility permission.
         hotkeyManager?.start()
+        enforceReachability()
     }
 
     private func ensureSingleInstance() {
@@ -114,10 +125,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NotificationCenter.default.addObserver(forName: .menuBarVisibilityChanged, object: nil, queue: .main) { [weak self] notification in
             guard let isVisible = notification.object as? Bool else { return }
+            guard let self else { return }
+
+            if !isVisible, !(self.hotkeyManager?.hasActiveGlobalHotkeys ?? false) {
+                self.appState.menuBarVisible = true
+                self.menuBarController?.show()
+                self.presentHotkeysUnavailableAlert()
+                return
+            }
+
             if isVisible {
-                self?.menuBarController?.show()
+                self.menuBarController?.show()
             } else {
-                self?.menuBarController?.hide()
+                self.menuBarController?.hide()
             }
         }
 
@@ -183,5 +203,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Input Monitoring has no direct prompt API; users can grant it from Privacy settings if needed.
+    }
+
+    private func enforceReachability() {
+        // If users hide the menu icon while no global hotkeys are active, the app becomes unreachable.
+        guard !appState.menuBarVisible else { return }
+        guard !(hotkeyManager?.hasActiveGlobalHotkeys ?? false) else { return }
+        appState.menuBarVisible = true
+        menuBarController?.show()
+    }
+
+    private func presentHotkeysUnavailableAlert() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Can't Hide Menu Bar Icon Yet"
+        alert.informativeText = "Global hotkeys are not active. Keep the menu bar icon visible until Accessibility/Input Monitoring permissions are granted."
+        alert.addButton(withTitle: "Open Permissions")
+        alert.addButton(withTitle: "OK")
+        if alert.runModal() == .alertFirstButtonReturn {
+            requestPermissions()
+            PermissionChecker.openInputMonitoringSettings()
+        }
     }
 }

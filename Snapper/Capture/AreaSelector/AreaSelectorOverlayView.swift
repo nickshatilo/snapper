@@ -6,12 +6,10 @@ final class AreaSelectorOverlayView: NSView {
 
     private var selectionStart: NSPoint?
     private var selectionRect: NSRect?
-    private var currentMouseLocation: NSPoint = .zero
     private var isDragging = false
 
     private let overlayColor = NSColor.black.withAlphaComponent(0.3)
     private let selectionBorderColor = NSColor.white
-    private let crosshairColor = NSColor.white.withAlphaComponent(0.6)
     private let dimensionFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
 
     override var acceptsFirstResponder: Bool { true }
@@ -54,26 +52,6 @@ final class AreaSelectorOverlayView: NSView {
             drawDimensionLabel(context: context, rect: rect)
         }
 
-        // Crosshair
-        if !isDragging {
-            drawCrosshair(context: context)
-        }
-    }
-
-    private func drawCrosshair(context: CGContext) {
-        context.setStrokeColor(crosshairColor.cgColor)
-        context.setLineWidth(0.5)
-        context.setLineDash(phase: 0, lengths: [])
-
-        // Horizontal line
-        context.move(to: CGPoint(x: 0, y: currentMouseLocation.y))
-        context.addLine(to: CGPoint(x: bounds.width, y: currentMouseLocation.y))
-        context.strokePath()
-
-        // Vertical line
-        context.move(to: CGPoint(x: currentMouseLocation.x, y: 0))
-        context.addLine(to: CGPoint(x: currentMouseLocation.x, y: bounds.height))
-        context.strokePath()
     }
 
     private func drawDimensionLabel(context: CGContext, rect: CGRect) {
@@ -133,14 +111,23 @@ final class AreaSelectorOverlayView: NSView {
         }
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        currentMouseLocation = convert(event.locationInWindow, from: nil)
-        needsDisplay = true
-    }
-
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
+            selectionStart = nil
+            selectionRect = nil
+            isDragging = false
+            needsDisplay = true
             onCancel?()
+            return
         }
+        super.keyDown(with: event)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        selectionStart = nil
+        selectionRect = nil
+        isDragging = false
+        needsDisplay = true
+        onCancel?()
     }
 }

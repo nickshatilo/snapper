@@ -6,7 +6,7 @@ struct QuickAccessOverlayView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .trailing, spacing: 8) {
+            LazyVStack(alignment: .trailing, spacing: 8) {
                 ForEach(manager.captures) { capture in
                     CaptureThumbnailView(
                         capture: capture,
@@ -20,6 +20,8 @@ struct QuickAccessOverlayView: View {
             .padding(.horizontal, 4)
         }
         .frame(width: thumbnailWidth)
+        .frame(maxHeight: .infinity, alignment: .topTrailing)
+        .animation(.interactiveSpring(response: 0.38, dampingFraction: 0.9, blendDuration: 0.1), value: manager.captures.map(\.id))
         .scrollIndicators(.never)
         .background(Color.clear)
     }

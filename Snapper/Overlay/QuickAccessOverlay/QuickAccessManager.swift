@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 @Observable
@@ -8,8 +9,11 @@ final class QuickAccessManager {
     private let appState: AppState
     private var observerTokens: [NSObjectProtocol] = []
     private let thumbnailWidth: CGFloat = 240
-    private let thumbnailApproxHeight: CGFloat = 150
+    private let thumbnailMaxHeight: CGFloat = 170
+    private let thumbnailHorizontalInset: CGFloat = 8
+    private let thumbnailVerticalInset: CGFloat = 4
     private let panelMaxHeight: CGFloat = 560
+    private let panelMinHeight: CGFloat = 120
 
     init(appState: AppState) {
         self.appState = appState
@@ -41,7 +45,7 @@ final class QuickAccessManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.positionPanel()
+            self?.updatePanelLayout(animated: true)
         }
         observerTokens.append(cornerToken)
 
@@ -50,7 +54,7 @@ final class QuickAccessManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.positionPanel()
+            self?.updatePanelLayout(animated: true)
         }
         observerTokens.append(screenToken)
     }
@@ -68,26 +72,34 @@ final class QuickAccessManager {
             height: info.result.height,
             fileSize: info.savedURL.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int } ?? 0
         )
-        captures.insert(capture, at: 0)
+        withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.86, blendDuration: 0.12)) {
+            captures.insert(capture, at: 0)
+        }
         showPanel()
     }
 
     func removeCapture(_ id: UUID) {
-        captures.removeAll { $0.id == id }
+        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.9, blendDuration: 0.08)) {
+            captures.removeAll { $0.id == id }
+        }
         if captures.isEmpty {
             hidePanel()
+        } else {
+            updatePanelLayout(animated: true)
         }
     }
 
     func dismissAll() {
-        captures.removeAll()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            captures.removeAll()
+        }
         hidePanel()
     }
 
     private func showPanel() {
         if panel == nil {
             let panel = QuickAccessPanel(
-                contentRect: NSRect(x: 0, y: 0, width: thumbnailWidth, height: thumbnailApproxHeight),
+                contentRect: NSRect(x: 0, y: 0, width: thumbnailWidth, height: panelMinHeight),
                 styleMask: [],
                 backing: .buffered,
                 defer: true
@@ -99,8 +111,8 @@ final class QuickAccessManager {
             self.panel = panel
         }
 
-        updatePanelSize()
-        positionPanel()
+        let shouldAnimate = panel?.isVisible == true
+        updatePanelLayout(animated: shouldAnimate)
         panel?.orderFront(nil)
     }
 
@@ -108,22 +120,26 @@ final class QuickAccessManager {
         panel?.orderOut(nil)
     }
 
-    private func positionPanel() {
-        guard let panel, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+    private func updatePanelLayout(animated: Bool) {
+        guard let panel else { return }
+        let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first
+        guard let screen else { return }
+
         let margin: CGFloat = 16
         let screenFrame = screen.visibleFrame
+        let targetSize = NSSize(width: thumbnailWidth, height: targetPanelHeight())
 
         let origin: NSPoint
         switch appState.overlayCorner {
         case .topLeft:
             origin = NSPoint(
                 x: screenFrame.minX + margin,
-                y: screenFrame.maxY - panel.frame.height - margin
+                y: screenFrame.maxY - targetSize.height - margin
             )
         case .topRight:
             origin = NSPoint(
-                x: screenFrame.maxX - panel.frame.width - margin,
-                y: screenFrame.maxY - panel.frame.height - margin
+                x: screenFrame.maxX - targetSize.width - margin,
+                y: screenFrame.maxY - targetSize.height - margin
             )
         case .bottomLeft:
             origin = NSPoint(
@@ -132,21 +148,39 @@ final class QuickAccessManager {
             )
         case .bottomRight:
             origin = NSPoint(
-                x: screenFrame.maxX - panel.frame.width - margin,
+                x: screenFrame.maxX - targetSize.width - margin,
                 y: screenFrame.minY + margin
             )
         }
-        panel.setFrameOrigin(origin)
+
+        let targetFrame = NSRect(origin: origin, size: targetSize)
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.24
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(targetFrame, display: true)
+            }
+        } else {
+            panel.setFrame(targetFrame, display: true)
+        }
     }
 
-    private func updatePanelSize() {
-        guard let panel else { return }
-        let captureCount = CGFloat(captures.count)
+    private func targetPanelHeight() -> CGFloat {
         let spacing: CGFloat = 8
         let padding: CGFloat = 16
-        let contentHeight = captureCount * thumbnailApproxHeight + max(0, captureCount - 1) * spacing + padding
-        let height = min(panelMaxHeight, max(thumbnailApproxHeight, contentHeight))
-        panel.setContentSize(NSSize(width: thumbnailWidth, height: height))
+        let captureHeights = captures.reduce(CGFloat.zero) { partial, capture in
+            partial + estimatedThumbnailHeight(for: capture)
+        }
+        let contentHeight = captureHeights + max(0, CGFloat(captures.count - 1)) * spacing + padding
+        return min(panelMaxHeight, max(panelMinHeight, contentHeight))
+    }
+
+    private func estimatedThumbnailHeight(for capture: QuickAccessCapture) -> CGFloat {
+        let width = max(1, thumbnailWidth - thumbnailHorizontalInset)
+        let ratio = CGFloat(capture.height) / max(1, CGFloat(capture.width))
+        let rawHeight = width * ratio
+        let imageHeight = min(thumbnailMaxHeight, max(56, rawHeight))
+        return imageHeight + thumbnailVerticalInset
     }
 }
 

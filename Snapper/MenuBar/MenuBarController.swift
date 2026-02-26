@@ -10,12 +10,26 @@ final class MenuBarController {
     }
 
     private func setupStatusItem() {
-        guard appState.menuBarVisible else { return }
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Snapper")
-            button.image?.isTemplate = true
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         }
+
+        guard let button = statusItem?.button else { return }
+        let image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Snapper")
+            ?? NSImage(systemSymbolName: "camera", accessibilityDescription: "Snapper")
+        if let image {
+            image.isTemplate = true
+            statusItem?.length = NSStatusItem.squareLength
+            button.image = image
+            button.title = ""
+            button.imagePosition = .imageOnly
+        } else {
+            statusItem?.length = NSStatusItem.variableLength
+            button.image = nil
+            button.title = "Snapper"
+            button.imagePosition = .imageLeading
+        }
+
         statusItem?.menu = buildMenu()
     }
 

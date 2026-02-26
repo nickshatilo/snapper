@@ -39,13 +39,19 @@ struct AnnotationEditorView: View {
                 ToolbarView(toolManager: toolManager)
                     .frame(width: 44)
                     .background(.bar)
+                    .zIndex(2)
 
                 Divider()
+                    .zIndex(2)
 
                 // Canvas
-                CanvasView(canvasState: canvasState, toolManager: toolManager)
+                ZStack {
+                    CanvasView(canvasState: canvasState, toolManager: toolManager)
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .windowBackgroundColor))
                     .clipped()
+                    .zIndex(1)
             }
 
             Divider()

@@ -23,6 +23,18 @@ struct GeneralSettingsView: View {
 
             Section("After Capture") {
                 Toggle("Play capture sound", isOn: $appState.captureSound)
+                if appState.captureSound {
+                    HStack {
+                        Picker("Capture sound", selection: $appState.captureSoundName) {
+                            ForEach(CaptureSound.allCases, id: \.self) { sound in
+                                Text(sound.displayName).tag(sound)
+                            }
+                        }
+                        Button("Preview") {
+                            SoundPlayer.playCapture(appState.captureSoundName)
+                        }
+                    }
+                }
                 Toggle("Copy to clipboard", isOn: $appState.copyToClipboard)
                 Toggle("Save to file", isOn: $appState.saveToFile)
             }

@@ -3,6 +3,8 @@ import AppKit
 final class AreaSelectorWindowController {
     private var overlayWindows: [NSWindow] = []
     private var overlayViews: [AreaSelectorOverlayView] = []
+    private var localKeyMonitor: Any?
+    private var didFinish = false
     private let completion: (CGRect?) -> Void
 
     init(completion: @escaping (CGRect?) -> Void) {
@@ -10,8 +12,12 @@ final class AreaSelectorWindowController {
     }
 
     func show(freezeScreen: Bool) {
+        didFinish = false
+        installKeyMonitor()
+        NSApp.activate(ignoringOtherApps: true)
+
         for screen in NSScreen.screens {
-            let window = NSWindow(
+            let window = AreaSelectorWindow(
                 contentRect: screen.frame,
                 styleMask: .borderless,
                 backing: .buffered,
@@ -35,27 +41,53 @@ final class AreaSelectorWindowController {
                     width: rect.width,
                     height: rect.height
                 )
-                self.completion(screenRect)
+                self.finish(with: screenRect)
             }
             overlayView.onCancel = { [weak self] in
-                self?.completion(nil)
+                self?.finish(with: nil)
             }
 
             window.contentView = overlayView
             window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(overlayView)
             overlayWindows.append(window)
             overlayViews.append(overlayView)
         }
-
-        NSCursor.crosshair.push()
     }
 
     func close() {
-        NSCursor.pop()
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+            self.localKeyMonitor = nil
+        }
         for window in overlayWindows {
             window.orderOut(nil)
         }
         overlayWindows.removeAll()
         overlayViews.removeAll()
     }
+
+    private func installKeyMonitor() {
+        guard localKeyMonitor == nil else { return }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 53 { // Escape
+                self.finish(with: nil)
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func finish(with result: CGRect?) {
+        guard !didFinish else { return }
+        didFinish = true
+        close()
+        completion(result)
+    }
+}
+
+private final class AreaSelectorWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }

@@ -434,10 +434,25 @@ final class CanvasNSView: NSView {
     }
 
     private func intersectingBlockIDs(in rect: CGRect) -> Set<UUID> {
-        Set(
-            recognizedTextBlocks
-                .filter { $0.imageRect.intersects(rect) }
-                .map(\.id)
+        let normalizedRect = rect.standardized
+        guard normalizedRect.width > 0, normalizedRect.height > 0 else { return [] }
+
+        let useCoverageThreshold = normalizedRect.width > 20 || normalizedRect.height > 20
+
+        return Set(
+            recognizedTextBlocks.compactMap { block in
+                let blockRect = block.imageRect.standardized
+                let intersection = blockRect.intersection(normalizedRect)
+                guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else { return nil }
+
+                if !useCoverageThreshold {
+                    return block.id
+                }
+
+                let blockArea = max(blockRect.width * blockRect.height, 1)
+                let coveredRatio = (intersection.width * intersection.height) / blockArea
+                return coveredRatio >= 0.16 ? block.id : nil
+            }
         )
     }
 
@@ -446,7 +461,8 @@ final class CanvasNSView: NSView {
     }
 
     private func blocksNear(point: CGPoint) -> Set<UUID> {
-        let hitPadding = max(4, 8 / max(canvasState.zoomLevel, 0.1))
+        let zoom = max(canvasState.zoomLevel, 0.1)
+        let hitPadding = max(8, 16 / zoom)
         let hitRect = CGRect(
             x: point.x - hitPadding,
             y: point.y - hitPadding,
@@ -455,8 +471,10 @@ final class CanvasNSView: NSView {
         )
 
         let directHits = recognizedTextBlocks.filter { $0.imageRect.intersects(hitRect) }
-        if !directHits.isEmpty {
-            return Set(directHits.map(\.id))
+        if let nearestDirectHit = directHits.min(by: {
+            distance(from: point, to: $0.imageRect) < distance(from: point, to: $1.imageRect)
+        }) {
+            return [nearestDirectHit.id]
         }
 
         guard let nearest = recognizedTextBlocks.min(by: {
@@ -467,7 +485,8 @@ final class CanvasNSView: NSView {
         }
 
         let nearestDistance = distance(from: point, to: nearest.imageRect)
-        return nearestDistance <= hitPadding * 2 ? [nearest.id] : []
+        let maxDistance = max(14, 32 / zoom)
+        return nearestDistance <= maxDistance ? [nearest.id] : []
     }
 
     private func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
@@ -539,29 +558,25 @@ final class CanvasNSView: NSView {
 
         let selectedRects = mergedHighlightRects(for: selectedTextBlockIDs)
         for rect in selectedRects {
-            context.setFillColor(NSColor.systemBlue.withAlphaComponent(0.2).cgColor)
-            let path = CGPath(
-                roundedRect: rect.insetBy(dx: -1 / zoom, dy: -0.5 / zoom),
-                cornerWidth: 3 / zoom,
-                cornerHeight: 3 / zoom,
-                transform: nil
+            fillHighlight(
+                rect,
+                in: context,
+                zoom: zoom,
+                topAlpha: 0.08,
+                bottomAlpha: 0.28
             )
-            context.addPath(path)
-            context.fillPath()
         }
 
         let previewOnlyIDs = previewBlockIDs.subtracting(selectedTextBlockIDs)
         let previewRects = mergedHighlightRects(for: previewOnlyIDs)
         for rect in previewRects {
-            context.setFillColor(NSColor.systemBlue.withAlphaComponent(0.1).cgColor)
-            let path = CGPath(
-                roundedRect: rect.insetBy(dx: -0.8 / zoom, dy: -0.4 / zoom),
-                cornerWidth: 2.5 / zoom,
-                cornerHeight: 2.5 / zoom,
-                transform: nil
+            fillHighlight(
+                rect,
+                in: context,
+                zoom: zoom,
+                topAlpha: 0.05,
+                bottomAlpha: 0.17
             )
-            context.addPath(path)
-            context.fillPath()
         }
 
         let accent = NSColor.controlAccentColor
@@ -577,6 +592,48 @@ final class CanvasNSView: NSView {
             context.setLineDash(phase: 0, lengths: [])
         }
 
+        context.restoreGState()
+    }
+
+    private func fillHighlight(
+        _ rect: CGRect,
+        in context: CGContext,
+        zoom: CGFloat,
+        topAlpha: CGFloat,
+        bottomAlpha: CGFloat
+    ) {
+        let expanded = rect.insetBy(dx: -1 / zoom, dy: -0.5 / zoom)
+        let path = CGPath(
+            roundedRect: expanded,
+            cornerWidth: 3 / zoom,
+            cornerHeight: 3 / zoom,
+            transform: nil
+        )
+
+        let color = NSColor.systemBlue
+        guard let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                color.withAlphaComponent(topAlpha).cgColor,
+                color.withAlphaComponent(bottomAlpha).cgColor,
+            ] as CFArray,
+            locations: [0, 1]
+        ) else {
+            context.addPath(path)
+            context.setFillColor(color.withAlphaComponent(bottomAlpha).cgColor)
+            context.fillPath()
+            return
+        }
+
+        context.saveGState()
+        context.addPath(path)
+        context.clip()
+        context.drawLinearGradient(
+            gradient,
+            start: CGPoint(x: expanded.midX, y: expanded.maxY),
+            end: CGPoint(x: expanded.midX, y: expanded.minY),
+            options: []
+        )
         context.restoreGState()
     }
 
@@ -616,18 +673,21 @@ final class CanvasNSView: NSView {
         var merged: [CGRect] = []
         for line in lines {
             let sortedLineRects = line.rects.sorted { $0.minX < $1.minX }
-            guard var current = sortedLineRects.first else { continue }
+            guard let first = sortedLineRects.first else { continue }
+
+            var minX = first.minX
+            var maxX = first.maxX
+            var minY = first.minY
+            var maxY = first.maxY
 
             for rect in sortedLineRects.dropFirst() {
-                let maxGap = max(3, min(current.height, rect.height) * 0.5)
-                if rect.minX - current.maxX <= maxGap {
-                    current = current.union(rect)
-                } else {
-                    merged.append(current)
-                    current = rect
-                }
+                minX = min(minX, rect.minX)
+                maxX = max(maxX, rect.maxX)
+                minY = min(minY, rect.minY)
+                maxY = max(maxY, rect.maxY)
             }
-            merged.append(current)
+
+            merged.append(CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY))
         }
 
         return merged
