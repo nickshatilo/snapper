@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "TAG=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "TAG=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve package dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -scheme Snapper \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm"
+
+      - name: Import signing certificate
+        if: ${{ env.HAS_CERT == 'true' }}
+        env:
+          HAS_CERT: ${{ secrets.CERTIFICATE_P12 != '' }}
+          CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Build release
+        env:
+          HAS_CERT: ${{ secrets.CERTIFICATE_P12 != '' }}
+        run: |
+          if [ "$HAS_CERT" = "true" ]; then
+            SIGN_FLAGS=(
+              CODE_SIGN_STYLE=Manual
+              DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM }}"
+              "CODE_SIGN_IDENTITY=${{ secrets.CODE_SIGN_IDENTITY }}"
+            )
+          else
+            SIGN_FLAGS=(
+              CODE_SIGN_IDENTITY="-"
+              CODE_SIGNING_ALLOWED=NO
+            )
+          fi
+
+          xcodebuild build \
+            -scheme Snapper \
+            -destination 'platform=macOS' \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/build" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" \
+            MARKETING_VERSION="${{ steps.version.outputs.VERSION }}" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            "${SIGN_FLAGS[@]}"
+
+      - name: Notarize
+        if: ${{ env.HAS_NOTARY == 'true' }}
+        env:
+          HAS_NOTARY: ${{ secrets.NOTARY_APPLE_ID != '' }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          APP_PATH="$RUNNER_TEMP/build/Build/Products/Release/Snapper.app"
+          ZIP_PATH="$RUNNER_TEMP/notarize.zip"
+
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+
+          xcrun notarytool submit "$ZIP_PATH" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --wait
+
+          xcrun stapler staple "$APP_PATH"
+
+      - name: Create DMG
+        run: |
+          APP_PATH="$RUNNER_TEMP/build/Build/Products/Release/Snapper.app"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          # Create a staging folder with the app and Applications symlink
+          STAGING="$RUNNER_TEMP/dmg-staging"
+          mkdir -p "$STAGING"
+          cp -R "$APP_PATH" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+
+          hdiutil create \
+            -volname "Snapper $VERSION" \
+            -srcfolder "$STAGING" \
+            -ov -format UDZO \
+            "Snapper-${VERSION}.dmg"
+
+      - name: Create zip
+        run: |
+          APP_PATH="$RUNNER_TEMP/build/Build/Products/Release/Snapper.app"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          ditto -c -k --keepParent "$APP_PATH" "Snapper-${VERSION}.zip"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: Snapper ${{ steps.version.outputs.VERSION }}
+          files: |
+            Snapper-*.dmg
+            Snapper-*.zip
+          generate_release_notes: true
+          draft: false

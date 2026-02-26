@@ -1,0 +1,82 @@
+name: Snapper
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  bundleIdPrefix: com.snapper
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+
+targets:
+  Snapper:
+    type: application
+    platform: macOS
+    sources:
+      - path: Snapper
+        excludes:
+          - "**/.DS_Store"
+    resources:
+      - path: Snapper/Resources/Assets.xcassets
+      - path: Snapper/Resources/Info.plist
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snapper.app
+        PRODUCT_NAME: Snapper
+        INFOPLIST_FILE: Snapper/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Snapper/Resources/Snapper.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: 565U5492Q2
+        CODE_SIGN_IDENTITY: "Apple Development: shatilo.nick@gmail.com (MUN5VG7X6X)"
+        ARCHS: "$(ARCHS_STANDARD)"
+        ONLY_ACTIVE_ARCH: NO
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/../Frameworks"
+    dependencies:
+      - package: Sparkle
+    entitlements:
+      path: Snapper/Resources/Snapper.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.automation.apple-events: true
+
+  SnapperTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: SnapperTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snapper.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Snapper
+
+schemes:
+  Snapper:
+    build:
+      targets:
+        Snapper: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - SnapperTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
