@@ -3,7 +3,7 @@ import XCTest
 
 final class SnapperTests: XCTestCase {
     func testCaptureModeCases() {
-        XCTAssertEqual(CaptureMode.allCases.count, 7)
+        XCTAssertEqual(CaptureMode.allCases.count, 6)
         XCTAssertEqual(CaptureMode.fullscreen.displayName, "Fullscreen")
     }
 
@@ -17,7 +17,7 @@ final class SnapperTests: XCTestCase {
         XCTAssertEqual(ToolType.arrow.shortcutKey, "A")
         XCTAssertEqual(ToolType.rectangle.shortcutKey, "R")
         XCTAssertEqual(ToolType.crop.shortcutKey, "C")
-        XCTAssertEqual(ToolType.allCases.count, 12)
+        XCTAssertEqual(ToolType.allCases.count, 14)
     }
 
     func testCounterStyleDisplay() {
