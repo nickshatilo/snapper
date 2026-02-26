@@ -8,6 +8,7 @@ struct HistoryBrowserView: View {
     @State private var showGrid = true
     @State private var selectedFilter: CaptureMode?
     @State private var selectedRecords: Set<UUID> = []
+    private static let thumbnailCache = NSCache<NSString, NSImage>()
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 12)]
 
@@ -24,6 +25,10 @@ struct HistoryBrowserView: View {
             }
             Divider()
             statusBar
+        }
+        .onAppear(perform: reloadRecords)
+        .onReceive(NotificationCenter.default.publisher(for: .historyDidChange)) { _ in
+            reloadRecords()
         }
     }
 
@@ -127,9 +132,9 @@ struct HistoryBrowserView: View {
     }
 
     private func historyGridItem(_ record: CaptureRecord) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let thumbPath = record.thumbnailPath,
-               let image = NSImage(contentsOfFile: thumbPath) {
+        let thumbnail = thumbnailImage(for: record.thumbnailPath)
+        return VStack(alignment: .leading, spacing: 4) {
+            if let image = thumbnail {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -168,18 +173,22 @@ struct HistoryBrowserView: View {
                     NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(image))
                 }
             }
+            .disabled(record.filePath.isEmpty)
             Button("Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: record.filePath)])
             }
+            .disabled(record.filePath.isEmpty)
             Button("Copy") {
                 if let image = NSImage(contentsOfFile: record.filePath) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.writeObjects([image])
                 }
             }
+            .disabled(record.filePath.isEmpty)
             Divider()
             Button("Delete", role: .destructive) {
                 Task { @MainActor in
+                    removeThumbnailFromCache(for: record)
                     historyManager.delete(record)
                     records.removeAll { $0.id == record.id }
                 }
@@ -188,9 +197,9 @@ struct HistoryBrowserView: View {
     }
 
     private func historyListRow(_ record: CaptureRecord) -> some View {
-        HStack(spacing: 12) {
-            if let thumbPath = record.thumbnailPath,
-               let image = NSImage(contentsOfFile: thumbPath) {
+        let thumbnail = thumbnailImage(for: record.thumbnailPath)
+        return HStack(spacing: 12) {
+            if let image = thumbnail {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -220,13 +229,40 @@ struct HistoryBrowserView: View {
 
     private func deleteSelected() {
         Task { @MainActor in
-            for id in selectedRecords {
-                if let record = records.first(where: { $0.id == id }) {
-                    historyManager.delete(record)
-                }
+            let idsToDelete = selectedRecords
+            for record in records where idsToDelete.contains(record.id) {
+                removeThumbnailFromCache(for: record)
+                historyManager.delete(record)
             }
-            records.removeAll { selectedRecords.contains($0.id) }
+            records.removeAll { idsToDelete.contains($0.id) }
             selectedRecords.removeAll()
+        }
+    }
+
+    private func reloadRecords() {
+        let fetched = historyManager.fetchAll()
+        records = fetched
+
+        let validIDs = Set(fetched.map(\.id))
+        selectedRecords = selectedRecords.intersection(validIDs)
+    }
+
+    private func thumbnailImage(for path: String?) -> NSImage? {
+        guard let path else { return nil }
+        let key = path as NSString
+        if let cached = Self.thumbnailCache.object(forKey: key) {
+            return cached
+        }
+        guard let image = NSImage(contentsOfFile: path) else {
+            return nil
+        }
+        Self.thumbnailCache.setObject(image, forKey: key)
+        return image
+    }
+
+    private func removeThumbnailFromCache(for record: CaptureRecord) {
+        if let path = record.thumbnailPath {
+            Self.thumbnailCache.removeObject(forKey: path as NSString)
         }
     }
 }

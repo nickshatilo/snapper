@@ -138,32 +138,34 @@ final class CaptureCoordinator {
             PasteboardHelper.copyImage(result.image)
         }
 
-        // Save to file
-        var savedURL: URL?
-        if options.saveToFile {
-            let filename = FileNameGenerator.generate(
-                pattern: options.filenamePattern,
-                mode: result.mode,
-                appName: result.applicationName
-            )
-            let url = options.saveDirectory
-                .appendingPathComponent(filename)
-                .appendingPathExtension(options.format.fileExtension)
-            if ImageUtils.save(result.image, to: url, format: options.format, jpegQuality: options.jpegQuality) {
-                savedURL = url
-            }
-        }
-
         // Play sound
         if options.playSound {
             SoundPlayer.playCapture(options.captureSound)
         }
 
-        // Notify overlay
-        NotificationCenter.default.post(
-            name: .captureCompleted,
-            object: CaptureCompletedInfo(result: result, savedURL: savedURL)
-        )
+        DispatchQueue.global(qos: .userInitiated).async {
+            var savedURL: URL?
+            if options.saveToFile {
+                let filename = FileNameGenerator.generate(
+                    pattern: options.filenamePattern,
+                    mode: result.mode,
+                    appName: result.applicationName
+                )
+                let url = options.saveDirectory
+                    .appendingPathComponent(filename)
+                    .appendingPathExtension(options.format.fileExtension)
+                if ImageUtils.save(result.image, to: url, format: options.format, jpegQuality: options.jpegQuality) {
+                    savedURL = url
+                }
+            }
+
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .captureCompleted,
+                    object: CaptureCompletedInfo(result: result, savedURL: savedURL)
+                )
+            }
+        }
     }
 
     @MainActor

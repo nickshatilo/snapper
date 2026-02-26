@@ -47,7 +47,6 @@ struct CaptureSettingsView: View {
             }
 
             Section("Capture Behavior") {
-                Toggle("Show crosshair cursor", isOn: $appState.showCrosshair)
                 Toggle("Show magnifier", isOn: $appState.showMagnifier)
                 Toggle("Freeze screen during selection", isOn: $appState.freezeScreen)
                 Toggle("Save at Retina resolution (2x)", isOn: $appState.retina2x)

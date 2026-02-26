@@ -16,8 +16,9 @@ final class HistoryManager {
     }
 
     @MainActor
-    func saveCapture(result: CaptureResult, savedURL: URL?, thumbnailURL: URL?) {
+    func saveCapture(result: CaptureResult, savedURL: URL?, thumbnailURL: URL?, recordID: UUID = UUID()) {
         let record = CaptureRecord(
+            id: recordID,
             captureType: result.mode.rawValue,
             width: result.width,
             height: result.height,
@@ -30,9 +31,9 @@ final class HistoryManager {
         )
         modelContainer.mainContext.insert(record)
         try? modelContainer.mainContext.save()
+        NotificationCenter.default.post(name: .historyDidChange, object: nil)
     }
 
-    @MainActor
     func saveThumbnail(_ image: CGImage, for recordID: UUID) -> URL? {
         let url = Constants.App.historyDirectory
             .appendingPathComponent("thumbnails")
@@ -73,15 +74,8 @@ final class HistoryManager {
 
     @MainActor
     func delete(_ record: CaptureRecord) {
-        // Delete associated files
-        if !record.filePath.isEmpty {
-            try? FileManager.default.removeItem(atPath: record.filePath)
-        }
-        if let thumbPath = record.thumbnailPath {
-            try? FileManager.default.removeItem(atPath: thumbPath)
-        }
-        modelContainer.mainContext.delete(record)
-        try? modelContainer.mainContext.save()
+        delete(record, saveChanges: true)
+        NotificationCenter.default.post(name: .historyDidChange, object: nil)
     }
 
     @MainActor
@@ -91,10 +85,12 @@ final class HistoryManager {
         let predicate = #Predicate<CaptureRecord> { $0.timestamp < cutoff }
         let descriptor = FetchDescriptor<CaptureRecord>(predicate: predicate)
 
-        guard let records = try? modelContainer.mainContext.fetch(descriptor) else { return }
+        guard let records = try? modelContainer.mainContext.fetch(descriptor), !records.isEmpty else { return }
         for record in records {
-            delete(record)
+            delete(record, saveChanges: false)
         }
+        try? modelContainer.mainContext.save()
+        NotificationCenter.default.post(name: .historyDidChange, object: nil)
     }
 
     @MainActor
@@ -102,4 +98,34 @@ final class HistoryManager {
         let records = fetchAll()
         return records.reduce(0) { $0 + $1.fileSize }
     }
+
+    @MainActor
+    func clearAll() {
+        let descriptor = FetchDescriptor<CaptureRecord>()
+        guard let records = try? modelContainer.mainContext.fetch(descriptor), !records.isEmpty else { return }
+
+        for record in records {
+            delete(record, saveChanges: false)
+        }
+        try? modelContainer.mainContext.save()
+        NotificationCenter.default.post(name: .historyDidChange, object: nil)
+    }
+
+    @MainActor
+    private func delete(_ record: CaptureRecord, saveChanges: Bool) {
+        if !record.filePath.isEmpty {
+            try? FileManager.default.removeItem(atPath: record.filePath)
+        }
+        if let thumbPath = record.thumbnailPath {
+            try? FileManager.default.removeItem(atPath: thumbPath)
+        }
+        modelContainer.mainContext.delete(record)
+        if saveChanges {
+            try? modelContainer.mainContext.save()
+        }
+    }
+}
+
+extension Notification.Name {
+    static let historyDidChange = Notification.Name("historyDidChange")
 }

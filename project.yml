@@ -61,6 +61,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.snapper.app.tests
         GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: 565U5492Q2
+        CODE_SIGN_IDENTITY: "Apple Development: shatilo.nick@gmail.com (MUN5VG7X6X)"
     dependencies:
       - target: Snapper
 

@@ -56,7 +56,7 @@ final class HotkeyManager {
     }
 
     private func startPermissionRetry() {
-        guard permissionRetryTimer == nil else { return }
+        guard permissionRetryTimer == nil, eventTap == nil else { return }
         permissionRetryTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.installEventTapIfAllowed()
         }
@@ -75,6 +75,8 @@ final class HotkeyManager {
         hasLoggedMissingPermission = false
         installEventTap()
         if eventTap != nil {
+            permissionRetryTimer?.invalidate()
+            permissionRetryTimer = nil
             startHealthCheck()
         }
     }
@@ -118,6 +120,7 @@ final class HotkeyManager {
     }
 
     private func startHealthCheck() {
+        retapTimer?.invalidate()
         retapTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self, let tap = self.eventTap else { return }
             if !CGEvent.tapIsEnabled(tap: tap) {

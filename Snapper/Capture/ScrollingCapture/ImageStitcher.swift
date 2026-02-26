@@ -5,12 +5,19 @@ enum ImageStitcher {
         guard images.count >= 2 else { return images.first }
 
         let width = images[0].width
+        let rowSignatures = images.map { luminanceRowMeans(from: $0) }
 
-        // Detect overlap between consecutive images using cross-correlation on horizontal strips
         var offsets: [Int] = [0]
         for i in 1..<images.count {
-            let overlap = findOverlap(top: images[i - 1], bottom: images[i])
-            let yOffset = offsets.last! + images[i - 1].height - overlap
+            let overlap = findOverlap(
+                top: images[i - 1],
+                bottom: images[i],
+                topRows: rowSignatures[i - 1],
+                bottomRows: rowSignatures[i]
+            )
+            let maxSafeOverlap = max(0, min(images[i - 1].height, images[i].height) - 1)
+            let safeOverlap = min(max(0, overlap), maxSafeOverlap)
+            let yOffset = max(0, offsets.last! + images[i - 1].height - safeOverlap)
             offsets.append(yOffset)
         }
 
@@ -35,74 +42,96 @@ enum ImageStitcher {
         return context.makeImage()
     }
 
-    private static func findOverlap(top: CGImage, bottom: CGImage) -> Int {
-        let stripHeight = 40
-        let searchRange = min(top.height / 2, bottom.height / 2)
+    private static func findOverlap(
+        top: CGImage,
+        bottom: CGImage,
+        topRows: [Float]?,
+        bottomRows: [Float]?
+    ) -> Int {
+        guard let topRows, let bottomRows else { return 0 }
 
-        // Extract bottom strip of top image
-        guard let topStrip = top.cropping(to: CGRect(x: 0, y: top.height - stripHeight, width: top.width, height: stripHeight)) else {
+        let maxOverlap = min(top.height / 2, bottom.height / 2, topRows.count, bottomRows.count)
+        let stripHeight = min(64, maxOverlap)
+        guard stripHeight >= 16 else { return 0 }
+
+        let searchLimit = maxOverlap - stripHeight
+        guard searchLimit >= 0 else {
             return 0
         }
 
-        let topData = pixelData(from: topStrip)
+        let topStripStart = topRows.count - stripHeight
+        let topStrip = Array(topRows[topStripStart..<topRows.count])
 
         var bestMatch = 0
-        var bestScore: CGFloat = 0
+        var bestScore: CGFloat = 0.0
 
-        // Search through bottom image from top
-        for offset in stride(from: 0, to: searchRange - stripHeight, by: 2) {
-            guard let bottomStrip = bottom.cropping(to: CGRect(x: 0, y: offset, width: bottom.width, height: stripHeight)) else { continue }
-            let bottomData = pixelData(from: bottomStrip)
-
-            let score = normalizedCrossCorrelation(topData, bottomData)
-            if score > bestScore && score > 0.9 {
+        for offset in stride(from: 0, through: searchLimit, by: 2) {
+            let bottomStrip = Array(bottomRows[offset..<(offset + stripHeight)])
+            let score = normalizedCrossCorrelation(topStrip, bottomStrip)
+            if score > bestScore {
                 bestScore = score
-                bestMatch = bottom.height - offset
+                bestMatch = offset + stripHeight
             }
         }
 
+        guard bestScore >= 0.88 else { return 0 }
         return bestMatch
     }
 
-    private static func pixelData(from image: CGImage) -> [UInt8] {
-        let width = image.width
-        let height = image.height
-        let bytesPerRow = width * 4
-        var data = [UInt8](repeating: 0, count: height * bytesPerRow)
+    private static func luminanceRowMeans(from image: CGImage, sampleWidth: Int = 256) -> [Float]? {
+        let width = min(sampleWidth, max(1, image.width))
+        let height = max(1, image.height)
+        var data = [UInt8](repeating: 0, count: width * height)
 
         guard let context = CGContext(
             data: &data,
             width: width,
             height: height,
             bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return data }
+            bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return nil }
 
+        context.interpolationQuality = .low
+        context.setShouldAntialias(false)
+        // Keep row order stable for overlap detection.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return data
+
+        var means = [Float](repeating: 0, count: height)
+        for y in 0..<height {
+            let rowStart = y * width
+            var sum = 0
+            for x in 0..<width {
+                sum += Int(data[rowStart + x])
+            }
+            means[y] = Float(sum) / Float(width)
+        }
+
+        return means
     }
 
-    private static func normalizedCrossCorrelation(_ a: [UInt8], _ b: [UInt8]) -> CGFloat {
+    private static func normalizedCrossCorrelation(_ a: [Float], _ b: [Float]) -> CGFloat {
         guard a.count == b.count, !a.isEmpty else { return 0 }
 
-        var sum: CGFloat = 0
-        var sumSqA: CGFloat = 0
-        var sumSqB: CGFloat = 0
-        let meanA = CGFloat(a.reduce(0, { $0 + Int($1) })) / CGFloat(a.count)
-        let meanB = CGFloat(b.reduce(0, { $0 + Int($1) })) / CGFloat(b.count)
+        let meanA = Double(a.reduce(0, +)) / Double(a.count)
+        let meanB = Double(b.reduce(0, +)) / Double(b.count)
 
-        // Sample every 4th pixel for performance
-        for i in stride(from: 0, to: a.count, by: 4) {
-            let da = CGFloat(a[i]) - meanA
-            let db = CGFloat(b[i]) - meanB
+        var sum = 0.0
+        var sumSqA = 0.0
+        var sumSqB = 0.0
+
+        for i in 0..<a.count {
+            let da = Double(a[i]) - meanA
+            let db = Double(b[i]) - meanB
             sum += da * db
             sumSqA += da * da
             sumSqB += db * db
         }
 
         let denom = sqrt(sumSqA * sumSqB)
-        return denom > 0 ? sum / denom : 0
+        return denom > 0 ? CGFloat(sum / denom) : 0
     }
 }

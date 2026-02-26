@@ -42,6 +42,18 @@ final class ScrollingCaptureController {
             }
         }
 
+        let rectCaptureContext: ScreenCaptureService.RectCaptureContext
+        do {
+            rectCaptureContext = try await captureService.prepareRectCapture(for: rect)
+        } catch {
+            if let captureError = error as? CaptureError, captureError == .permissionDenied {
+                PermissionChecker.promptForScreenRecordingInSettings()
+                return
+            }
+            print("Failed to prepare scrolling capture context: \(error)")
+            return
+        }
+
         var capturedImages: [CGImage] = []
         let maxScrolls = 20
         let scrollDelay: UInt64 = 500_000_000 // 0.5 seconds
@@ -54,7 +66,7 @@ final class ScrollingCaptureController {
 
         for _ in 0..<maxScrolls {
             do {
-                let image = try await captureService.captureRect(rect)
+                let image = try await captureService.captureRect(rect, using: rectCaptureContext)
                 capturedImages.append(image)
 
                 // Check if we've reached the end (image hasn't changed)
@@ -97,7 +109,11 @@ final class ScrollingCaptureController {
 
         let finalImage: CGImage
         if capturedImages.count >= 2 {
-            finalImage = ImageStitcher.stitch(capturedImages) ?? firstImage
+            finalImage = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(returning: ImageStitcher.stitch(capturedImages) ?? firstImage)
+                }
+            }
         } else {
             finalImage = firstImage
         }
@@ -117,8 +133,14 @@ final class ScrollingCaptureController {
             let url = options.saveDirectory
                 .appendingPathComponent(filename)
                 .appendingPathExtension(options.format.fileExtension)
-            if ImageUtils.save(finalImage, to: url, format: options.format, jpegQuality: options.jpegQuality) {
-                savedURL = url
+            savedURL = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    if ImageUtils.save(finalImage, to: url, format: options.format, jpegQuality: options.jpegQuality) {
+                        continuation.resume(returning: url)
+                    } else {
+                        continuation.resume(returning: nil)
+                    }
+                }
             }
         }
         if options.copyToClipboard {
@@ -136,14 +158,48 @@ final class ScrollingCaptureController {
 
     private func imagesAreSimilar(_ a: CGImage, _ b: CGImage) -> Bool {
         guard a.width == b.width, a.height == b.height else { return false }
-        // Simple comparison: check a horizontal strip in the middle
-        let stripHeight = 10
-        let y = a.height / 2
+        let stripHeight = min(12, max(4, a.height / 10))
+        let y = max(0, (a.height / 2) - (stripHeight / 2))
         guard let stripA = a.cropping(to: CGRect(x: 0, y: y, width: a.width, height: stripHeight)),
-              let stripB = b.cropping(to: CGRect(x: 0, y: y, width: b.width, height: stripHeight)) else { return false }
+              let stripB = b.cropping(to: CGRect(x: 0, y: y, width: b.width, height: stripHeight)),
+              let fingerprintA = stripFingerprint(stripA),
+              let fingerprintB = stripFingerprint(stripB),
+              fingerprintA.count == fingerprintB.count else {
+            return false
+        }
 
-        let dataA = NSBitmapImageRep(cgImage: stripA).representation(using: .png, properties: [:])
-        let dataB = NSBitmapImageRep(cgImage: stripB).representation(using: .png, properties: [:])
-        return dataA == dataB
+        var totalDifference = 0
+        for i in fingerprintA.indices {
+            totalDifference += abs(Int(fingerprintA[i]) - Int(fingerprintB[i]))
+        }
+        let averageDifference = Double(totalDifference) / Double(fingerprintA.count)
+        return averageDifference < 2.0
+    }
+
+    private func stripFingerprint(_ image: CGImage) -> [UInt8]? {
+        let targetWidth = min(240, max(1, image.width))
+        let targetHeight = min(12, max(1, image.height))
+        let bytesPerRow = targetWidth
+        var data = [UInt8](repeating: 0, count: targetWidth * targetHeight)
+
+        guard let context = CGContext(
+            data: &data,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .low
+        context.setShouldAntialias(false)
+        context.draw(
+            image,
+            in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
+        )
+        return data
     }
 }

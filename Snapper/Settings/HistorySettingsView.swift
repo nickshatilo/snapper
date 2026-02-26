@@ -51,6 +51,9 @@ struct HistorySettingsView: View {
         .formStyle(.grouped)
         .padding()
         .onAppear { calculateStorageSize() }
+        .onReceive(NotificationCenter.default.publisher(for: .historyDidChange)) { _ in
+            calculateStorageSize()
+        }
     }
 
     private func calculateStorageSize() {
@@ -75,8 +78,7 @@ struct HistorySettingsView: View {
     }
 
     private func clearHistory() {
-        try? FileManager.default.removeItem(at: Constants.App.historyDirectory)
-        try? FileManager.default.createDirectory(at: Constants.App.historyDirectory, withIntermediateDirectories: true)
+        NotificationCenter.default.post(name: .clearHistoryRequested, object: nil)
         calculateStorageSize()
     }
 }

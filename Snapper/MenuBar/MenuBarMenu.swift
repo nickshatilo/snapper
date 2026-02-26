@@ -41,7 +41,7 @@ final class MenuBarMenu: NSMenu {
         addItem(NSMenuItem.separator())
 
         // Settings & Quit
-        addItem(makeItem("Permissions...", action: #selector(showPermissions), key: "", modifiers: []))
+        addItem(makeItem("Privacy Permissions...", action: #selector(showPermissions), key: "", modifiers: []))
         addItem(makeItem("Settings...", action: #selector(showSettings), key: ",", modifiers: [.command]))
         addItem(makeItem("Check for Updates...", action: #selector(checkForUpdates), key: "", modifiers: []))
 

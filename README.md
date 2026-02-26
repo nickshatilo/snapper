@@ -84,26 +84,6 @@ Snapper needs two permissions on first launch:
 
 All shortcuts are customizable in Settings → Shortcuts.
 
-## Project Structure
-
-```
-Snapper/
-├── App/            App lifecycle, state, constants
-├── Capture/        All capture modes + area/window selectors
-├── Editor/         Annotation editor, canvas, tools, backgrounds
-├── History/        SwiftData-backed capture history
-├── Hotkeys/        CGEvent tap hotkey system
-├── MenuBar/        Status item menu
-├── Onboarding/     First-run permission flow
-├── Overlay/        Quick access overlay + pinned screenshots
-├── Settings/       Preferences UI
-├── Updates/        Sparkle auto-updater
-├── Utilities/      Image helpers, clipboard, sound, file naming
-└── Resources/      Info.plist, entitlements, assets
-```
-
-Build config lives in `project.yml` (XcodeGen) — the `.xcodeproj` is generated and gitignored.
-
 ## Contributing
 
 1. Fork the repo

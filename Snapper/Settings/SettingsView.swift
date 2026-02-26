@@ -99,6 +99,11 @@ struct SettingsView: View {
                 calculateStorageSize()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .historyDidChange)) { _ in
+            if selectedTab == .history {
+                calculateStorageSize()
+            }
+        }
     }
 
     private var footer: some View {
@@ -275,12 +280,6 @@ struct SettingsView: View {
 
     private func captureBehaviorSection(appState: Bindable<AppState>) -> some View {
         SettingsSection(title: "Behavior") {
-            ToggleRow(
-                title: "Show Crosshair Cursor",
-                subtitle: "Display crosshair guides while selecting an area.",
-                isOn: appState.showCrosshair
-            )
-
             ToggleRow(
                 title: "Show Magnifier",
                 subtitle: "Zoom near the cursor for pixel-level area selection.",
@@ -487,8 +486,7 @@ struct SettingsView: View {
     }
 
     private func clearHistory() {
-        try? FileManager.default.removeItem(at: Constants.App.historyDirectory)
-        try? FileManager.default.createDirectory(at: Constants.App.historyDirectory, withIntermediateDirectories: true)
+        NotificationCenter.default.post(name: .clearHistoryRequested, object: nil)
         calculateStorageSize()
     }
 }

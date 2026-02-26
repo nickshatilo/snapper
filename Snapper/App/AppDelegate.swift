@@ -149,14 +149,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        NotificationCenter.default.addObserver(forName: .clearHistoryRequested, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.historyManager?.clearAll()
+            }
+        }
+
         // Save captures to history
         NotificationCenter.default.addObserver(forName: .captureCompleted, object: nil, queue: .main) { [weak self] notification in
             guard let info = notification.object as? CaptureCompletedInfo,
                   let historyManager = self?.historyManager else { return }
 
-            Task { @MainActor in
-                let thumbnailURL = historyManager.saveThumbnail(info.result.image, for: UUID())
-                historyManager.saveCapture(result: info.result, savedURL: info.savedURL, thumbnailURL: thumbnailURL)
+            let recordID = UUID()
+            let image = info.result.image
+
+            DispatchQueue.global(qos: .utility).async {
+                let thumbnailImage = ImageUtils.generateThumbnail(image) ?? image
+                let thumbnailURL = historyManager.saveThumbnail(thumbnailImage, for: recordID)
+                Task { @MainActor in
+                    historyManager.saveCapture(
+                        result: info.result,
+                        savedURL: info.savedURL,
+                        thumbnailURL: thumbnailURL,
+                        recordID: recordID
+                    )
+                }
             }
         }
     }
@@ -225,4 +242,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PermissionChecker.openInputMonitoringSettings()
         }
     }
+}
+
+extension Notification.Name {
+    static let clearHistoryRequested = Notification.Name("clearHistoryRequested")
 }
