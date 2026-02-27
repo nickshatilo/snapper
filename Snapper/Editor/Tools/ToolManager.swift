@@ -58,6 +58,7 @@ final class ToolManager {
             )
             canvasState.addAnnotation(annotation)
             canvasState.selectedAnnotationID = annotation.id
+            canvasState.selectedAnnotationIDs = [annotation.id]
         case .counter:
             let annotation = CounterAnnotation(
                 position: point,
@@ -67,6 +68,7 @@ final class ToolManager {
             )
             canvasState.addAnnotation(annotation)
             canvasState.selectedAnnotationID = annotation.id
+            canvasState.selectedAnnotationIDs = [annotation.id]
             counterValue += 1
         default:
             break
@@ -204,6 +206,7 @@ final class ToolManager {
             }
             canvasState.addAnnotation(active)
             canvasState.selectedAnnotationID = active.id
+            canvasState.selectedAnnotationIDs = [active.id]
             committedAnnotationID = active.id
         }
         activeAnnotation = nil

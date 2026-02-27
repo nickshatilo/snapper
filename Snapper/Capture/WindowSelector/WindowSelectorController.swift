@@ -51,6 +51,8 @@ final class WindowSelectorController {
             window.backgroundColor = NSColor.black.withAlphaComponent(0.01)
             window.ignoresMouseEvents = false
             window.acceptsMouseMovedEvents = true
+            // Keep ownership under ARC via `overlayWindows`; don't let close() release the instance.
+            window.isReleasedWhenClosed = false
 
             let overlay = WindowHighlightOverlay(frame: screen.frame)
             window.contentView = overlay

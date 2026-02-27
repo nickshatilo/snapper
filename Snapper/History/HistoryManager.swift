@@ -3,7 +3,6 @@ import SwiftData
 
 final class HistoryManager {
     let modelContainer: ModelContainer
-    private let writeQueue = DispatchQueue(label: "com.snapper.history.write", qos: .utility)
 
     init() {
         let schema = Schema([CaptureRecord.self])
@@ -32,27 +31,27 @@ final class HistoryManager {
             } ?? 0
         }
 
-        writeQueue.async { [modelContainer] in
-            let context = ModelContext(modelContainer)
+        let captureType = result.mode.rawValue
+        let width = result.width
+        let height = result.height
+        let filePath = savedURL?.path ?? ""
+        let thumbPath = thumbnailURL?.path
+        let appName = result.applicationName
+
+        DispatchQueue.main.async { [modelContainer] in
             let record = CaptureRecord(
                 id: recordID,
-                captureType: result.mode.rawValue,
-                width: result.width,
-                height: result.height,
-                filePath: savedURL?.path ?? "",
-                thumbnailPath: thumbnailURL?.path,
+                captureType: captureType,
+                width: width,
+                height: height,
+                filePath: filePath,
+                thumbnailPath: thumbPath,
                 fileSize: resolvedFileSize,
-                applicationName: result.applicationName
+                applicationName: appName
             )
-            context.insert(record)
-            do {
-                try context.save()
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(name: .historyDidChange, object: nil)
-                }
-            } catch {
-                print("History save failed: \(error)")
-            }
+            modelContainer.mainContext.insert(record)
+            try? modelContainer.mainContext.save()
+            NotificationCenter.default.post(name: .historyDidChange, object: nil)
         }
     }
 
@@ -99,40 +98,32 @@ final class HistoryManager {
     }
 
     func delete(recordID: UUID) {
-        writeQueue.async { [modelContainer] in
-            let context = ModelContext(modelContainer)
+        DispatchQueue.main.async { [modelContainer] in
             let predicate = #Predicate<CaptureRecord> { $0.id == recordID }
             let descriptor = FetchDescriptor<CaptureRecord>(predicate: predicate)
-            guard let record = try? context.fetch(descriptor).first else { return }
+            guard let record = try? modelContainer.mainContext.fetch(descriptor).first else { return }
 
             Self.removeFiles(for: record)
-            context.delete(record)
-            try? context.save()
-
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .historyDidChange, object: nil)
-            }
+            modelContainer.mainContext.delete(record)
+            try? modelContainer.mainContext.save()
+            NotificationCenter.default.post(name: .historyDidChange, object: nil)
         }
     }
 
     func deleteOlderThan(days: Int) {
         guard days > 0 else { return }
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
-        writeQueue.async { [modelContainer] in
-            let context = ModelContext(modelContainer)
+        DispatchQueue.main.async { [modelContainer] in
             let predicate = #Predicate<CaptureRecord> { $0.timestamp < cutoff }
             let descriptor = FetchDescriptor<CaptureRecord>(predicate: predicate)
-            guard let records = try? context.fetch(descriptor), !records.isEmpty else { return }
+            guard let records = try? modelContainer.mainContext.fetch(descriptor), !records.isEmpty else { return }
 
             for record in records {
                 Self.removeFiles(for: record)
-                context.delete(record)
+                modelContainer.mainContext.delete(record)
             }
-            try? context.save()
-
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .historyDidChange, object: nil)
-            }
+            try? modelContainer.mainContext.save()
+            NotificationCenter.default.post(name: .historyDidChange, object: nil)
         }
     }
 
@@ -143,20 +134,16 @@ final class HistoryManager {
     }
 
     func clearAll() {
-        writeQueue.async { [modelContainer] in
-            let context = ModelContext(modelContainer)
+        DispatchQueue.main.async { [modelContainer] in
             let descriptor = FetchDescriptor<CaptureRecord>()
-            guard let records = try? context.fetch(descriptor), !records.isEmpty else { return }
+            guard let records = try? modelContainer.mainContext.fetch(descriptor), !records.isEmpty else { return }
 
             for record in records {
                 Self.removeFiles(for: record)
-                context.delete(record)
+                modelContainer.mainContext.delete(record)
             }
-            try? context.save()
-
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .historyDidChange, object: nil)
-            }
+            try? modelContainer.mainContext.save()
+            NotificationCenter.default.post(name: .historyDidChange, object: nil)
         }
     }
 

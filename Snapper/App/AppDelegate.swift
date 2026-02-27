@@ -104,9 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
 
         for runningApp in runningApps where runningApp.processIdentifier != currentPID {
-            if !runningApp.terminate() {
-                runningApp.forceTerminate()
-            }
+            runningApp.activate(options: [.activateAllWindows])
+            NSApp.terminate(nil)
+            return
         }
     }
 

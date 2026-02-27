@@ -651,15 +651,15 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
 
     private func configureInitialViewportIfNeeded() {
         guard !hasInitializedViewport else { return }
-        configureViewportToFit()
-        hasInitializedViewport = true
+        hasInitializedViewport = configureViewportToFit()
     }
 
-    private func configureViewportToFit() {
-        guard bounds.width > 0, bounds.height > 0 else { return }
+    @discardableResult
+    private func configureViewportToFit() -> Bool {
+        guard bounds.width > 0, bounds.height > 0 else { return false }
         let imageWidth = CGFloat(canvasState.imageWidth)
         let imageHeight = CGFloat(canvasState.imageHeight)
-        guard imageWidth > 0, imageHeight > 0 else { return }
+        guard imageWidth > 0, imageHeight > 0 else { return false }
 
         let padding: CGFloat = 24
         let widthScale = max(0.1, (bounds.width - padding) / imageWidth)
@@ -673,6 +673,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             x: (bounds.width - renderedWidth) / 2,
             y: (bounds.height - renderedHeight) / 2
         )
+        return true
     }
 
     private func zoom(by factor: CGFloat, around viewPoint: CGPoint) {
@@ -1289,6 +1290,10 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     }
 
     private func drawAnnotationSelectionOverlay(in context: CGContext) {
+        if isActivelyDrawingNewShape() {
+            return
+        }
+
         let selectedIDs = selectedAnnotationIDs
         guard !selectedIDs.isEmpty else { return }
 
@@ -1321,6 +1326,16 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         drawRotationHandleIfNeeded(for: selection, zoom: zoom, accent: accent, in: context)
 
         context.restoreGState()
+    }
+
+    private func isActivelyDrawingNewShape() -> Bool {
+        guard isDragging else { return false }
+        switch toolManager.currentTool {
+        case .arrow, .rectangle, .ellipse, .line, .pencil, .highlighter, .blur, .pixelate, .spotlight:
+            return true
+        default:
+            return false
+        }
     }
 
     private func drawSelectionFrame(for annotation: any Annotation, in context: CGContext) {

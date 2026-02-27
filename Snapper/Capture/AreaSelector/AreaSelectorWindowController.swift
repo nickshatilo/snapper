@@ -14,7 +14,11 @@ final class AreaSelectorWindowController {
     func show(freezeScreen: Bool, showMagnifier: Bool = false) {
         didFinish = false
         installKeyMonitor()
-        NSApp.activate(ignoringOtherApps: true)
+        // Delay activation until the current event cycle finishes (for menu-triggered captures).
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.didFinish else { return }
+            NSApp.activate(ignoringOtherApps: true)
+        }
 
         for screen in NSScreen.screens {
             let window = AreaSelectorWindow(
@@ -30,6 +34,8 @@ final class AreaSelectorWindowController {
             window.ignoresMouseEvents = false
             window.acceptsMouseMovedEvents = true
             window.hasShadow = false
+            // We manage the window lifetime via `overlayWindows`; avoid legacy release-on-close over-release.
+            window.isReleasedWhenClosed = false
 
             let overlayView = AreaSelectorOverlayView(frame: screen.frame)
             overlayView.showsMagnifier = showMagnifier
@@ -89,8 +95,12 @@ final class AreaSelectorWindowController {
     private func finish(with result: CGRect?) {
         guard !didFinish else { return }
         didFinish = true
-        close()
-        completion(result)
+        // Avoid tearing down windows while AppKit is still dispatching the current mouse/key event.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.close()
+            self.completion(result)
+        }
     }
 
     private func captureImage(for screen: NSScreen) -> CGImage? {

@@ -7,7 +7,7 @@ final class QuickAccessManager {
     var captures: [QuickAccessCapture] = []
     private var panel: QuickAccessPanel?
     private let appState: AppState
-    private var observerTokens: [NSObjectProtocol] = []
+    @ObservationIgnored private var observerTokens: [NSObjectProtocol] = []
     private let thumbnailWidth: CGFloat = 240
     private let thumbnailMaxHeight: CGFloat = 170
     private let thumbnailHorizontalInset: CGFloat = 8

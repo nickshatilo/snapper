@@ -1,6 +1,5 @@
 import AppKit
 
-@Observable
 final class CaptureCoordinator {
     private let appState: AppState
     private let captureService = ScreenCaptureService()
@@ -93,7 +92,6 @@ final class CaptureCoordinator {
         areaSelectorController = nil
         areaSelectorController = AreaSelectorWindowController { [weak self] rect in
             guard let self else { return }
-            self.areaSelectorController?.close()
             self.areaSelectorController = nil
 
             guard let rect else {
