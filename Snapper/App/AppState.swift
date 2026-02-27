@@ -5,82 +5,91 @@ import SwiftUI
 @Observable
 final class AppState {
     private let defaults: UserDefaults
+    private var pendingDefaults: [String: Any] = [:]
+    private var flushWorkItem: DispatchWorkItem?
 
     var isFirstRun: Bool {
-        didSet { defaults.set(!isFirstRun, forKey: Constants.Keys.hasLaunchedBefore) }
+        didSet { enqueueDefault(!isFirstRun, forKey: Constants.Keys.hasLaunchedBefore) }
     }
 
     var isCapturing = false
 
     var menuBarVisible: Bool {
-        didSet { defaults.set(menuBarVisible, forKey: Constants.Keys.menuBarVisible) }
+        didSet { enqueueDefault(menuBarVisible, forKey: Constants.Keys.menuBarVisible) }
     }
 
     var launchAtLogin: Bool {
-        didSet { defaults.set(launchAtLogin, forKey: Constants.Keys.launchAtLogin) }
+        didSet { enqueueDefault(launchAtLogin, forKey: Constants.Keys.launchAtLogin) }
     }
 
     var captureSound: Bool {
-        didSet { defaults.set(captureSound, forKey: Constants.Keys.captureSound) }
+        didSet { enqueueDefault(captureSound, forKey: Constants.Keys.captureSound) }
     }
 
     var captureSoundName: CaptureSound {
-        didSet { defaults.set(captureSoundName.rawValue, forKey: Constants.Keys.captureSoundName) }
+        didSet { enqueueDefault(captureSoundName.rawValue, forKey: Constants.Keys.captureSoundName) }
     }
 
     var copyToClipboard: Bool {
-        didSet { defaults.set(copyToClipboard, forKey: Constants.Keys.copyToClipboard) }
+        didSet { enqueueDefault(copyToClipboard, forKey: Constants.Keys.copyToClipboard) }
     }
 
     var saveToFile: Bool {
-        didSet { defaults.set(saveToFile, forKey: Constants.Keys.saveToFile) }
+        didSet { enqueueDefault(saveToFile, forKey: Constants.Keys.saveToFile) }
     }
 
     var saveDirectory: URL {
-        didSet { defaults.set(saveDirectory.path, forKey: Constants.Keys.saveDirectory) }
+        didSet { enqueueDefault(saveDirectory.path, forKey: Constants.Keys.saveDirectory) }
     }
 
     var imageFormat: ImageFormat {
-        didSet { defaults.set(imageFormat.rawValue, forKey: Constants.Keys.imageFormat) }
+        didSet { enqueueDefault(imageFormat.rawValue, forKey: Constants.Keys.imageFormat) }
     }
 
     var jpegQuality: Double {
-        didSet { defaults.set(jpegQuality, forKey: Constants.Keys.jpegQuality) }
+        didSet { enqueueDefault(jpegQuality, forKey: Constants.Keys.jpegQuality) }
     }
 
     var filenamePattern: String {
-        didSet { defaults.set(filenamePattern, forKey: Constants.Keys.filenamePattern) }
+        didSet { enqueueDefault(filenamePattern, forKey: Constants.Keys.filenamePattern) }
     }
 
     var showCrosshair: Bool {
-        didSet { defaults.set(showCrosshair, forKey: Constants.Keys.showCrosshair) }
+        didSet { enqueueDefault(showCrosshair, forKey: Constants.Keys.showCrosshair) }
     }
 
     var showMagnifier: Bool {
-        didSet { defaults.set(showMagnifier, forKey: Constants.Keys.showMagnifier) }
+        didSet { enqueueDefault(showMagnifier, forKey: Constants.Keys.showMagnifier) }
     }
 
     var freezeScreen: Bool {
-        didSet { defaults.set(freezeScreen, forKey: Constants.Keys.freezeScreen) }
+        didSet { enqueueDefault(freezeScreen, forKey: Constants.Keys.freezeScreen) }
     }
 
     var retina2x: Bool {
-        didSet { defaults.set(retina2x, forKey: Constants.Keys.retina2x) }
+        didSet { enqueueDefault(retina2x, forKey: Constants.Keys.retina2x) }
+    }
+
+    var windowCaptureIncludeShadow: Bool {
+        didSet { enqueueDefault(windowCaptureIncludeShadow, forKey: Constants.Keys.windowCaptureIncludeShadow) }
     }
 
     var overlayCorner: OverlayCorner {
         didSet {
-            defaults.set(overlayCorner.rawValue, forKey: Constants.Keys.overlayCorner)
+            enqueueDefault(overlayCorner.rawValue, forKey: Constants.Keys.overlayCorner)
             NotificationCenter.default.post(name: .overlayCornerChanged, object: nil)
         }
     }
 
     var historyRetentionDays: Int {
-        didSet { defaults.set(historyRetentionDays, forKey: Constants.Keys.historyRetentionDays) }
+        didSet { enqueueDefault(historyRetentionDays, forKey: Constants.Keys.historyRetentionDays) }
     }
 
     var defaultPinnedOpacity: Double {
-        didSet { defaults.set(defaultPinnedOpacity, forKey: Constants.Keys.defaultPinnedOpacity) }
+        didSet {
+            enqueueDefault(defaultPinnedOpacity, forKey: Constants.Keys.defaultPinnedOpacity)
+            NotificationCenter.default.post(name: .pinnedOpacityChanged, object: nil)
+        }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -102,7 +111,8 @@ final class AppState {
         if let path = defaults.string(forKey: Constants.Keys.saveDirectory) {
             self.saveDirectory = URL(fileURLWithPath: path)
         } else {
-            self.saveDirectory = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+            self.saveDirectory = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSHomeDirectory())
         }
 
         if let raw = defaults.string(forKey: Constants.Keys.imageFormat),
@@ -115,9 +125,10 @@ final class AppState {
         self.jpegQuality = defaults.object(forKey: Constants.Keys.jpegQuality) as? Double ?? 0.9
         self.filenamePattern = defaults.string(forKey: Constants.Keys.filenamePattern) ?? Constants.Defaults.filenamePattern
         self.showCrosshair = defaults.object(forKey: Constants.Keys.showCrosshair) as? Bool ?? true
-        self.showMagnifier = defaults.object(forKey: Constants.Keys.showMagnifier) as? Bool ?? true
+        self.showMagnifier = defaults.object(forKey: Constants.Keys.showMagnifier) as? Bool ?? false
         self.freezeScreen = defaults.bool(forKey: Constants.Keys.freezeScreen)
         self.retina2x = defaults.object(forKey: Constants.Keys.retina2x) as? Bool ?? true
+        self.windowCaptureIncludeShadow = defaults.object(forKey: Constants.Keys.windowCaptureIncludeShadow) as? Bool ?? true
 
         if let raw = defaults.string(forKey: Constants.Keys.overlayCorner),
            let corner = OverlayCorner(rawValue: raw) {
@@ -128,6 +139,26 @@ final class AppState {
 
         self.historyRetentionDays = defaults.object(forKey: Constants.Keys.historyRetentionDays) as? Int ?? 30
         self.defaultPinnedOpacity = defaults.object(forKey: Constants.Keys.defaultPinnedOpacity) as? Double ?? 1.0
+    }
+
+    private func enqueueDefault(_ value: Any, forKey key: String) {
+        pendingDefaults[key] = value
+        flushWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.flushDefaults()
+        }
+        flushWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+
+    func flushDefaults() {
+        flushWorkItem?.cancel()
+        flushWorkItem = nil
+        guard !pendingDefaults.isEmpty else { return }
+        for (key, value) in pendingDefaults {
+            defaults.set(value, forKey: key)
+        }
+        pendingDefaults.removeAll()
     }
 }
 

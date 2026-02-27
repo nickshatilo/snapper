@@ -57,24 +57,13 @@ struct HistorySettingsView: View {
     }
 
     private func calculateStorageSize() {
-        DispatchQueue.global().async {
-            let size = directorySize(at: Constants.App.historyDirectory)
+        DispatchQueue.global(qos: .utility).async {
+            let size = StorageSizeCalculator.directorySize(at: Constants.App.historyDirectory)
             let formatted = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
             DispatchQueue.main.async {
                 storageSize = formatted
             }
         }
-    }
-
-    private func directorySize(at url: URL) -> Int {
-        let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey])
-        var total = 0
-        while let fileURL = enumerator?.nextObject() as? URL {
-            if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                total += size
-            }
-        }
-        return total
     }
 
     private func clearHistory() {

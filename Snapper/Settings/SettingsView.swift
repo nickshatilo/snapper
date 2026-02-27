@@ -297,6 +297,12 @@ struct SettingsView: View {
                 subtitle: "Save captures at native Retina resolution.",
                 isOn: appState.retina2x
             )
+
+            ToggleRow(
+                title: "Include Window Shadows",
+                subtitle: "Keep drop shadows when capturing windows.",
+                isOn: appState.windowCaptureIncludeShadow
+            )
         }
     }
 
@@ -315,6 +321,22 @@ struct SettingsView: View {
             Text("Preview thumbnails stay visible until you dismiss them.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text("Pinned Opacity")
+                    Spacer()
+                    Slider(value: appState.defaultPinnedOpacity, in: 0.1...1.0)
+                        .frame(width: 180)
+                    Text("\(Int(appState.defaultPinnedOpacity.wrappedValue * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 42, alignment: .trailing)
+                }
+                Text("Applies to newly pinned screenshots and can update existing ones.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -464,24 +486,13 @@ struct SettingsView: View {
     }
 
     private func calculateStorageSize() {
-        DispatchQueue.global().async {
-            let size = directorySize(at: Constants.App.historyDirectory)
+        DispatchQueue.global(qos: .utility).async {
+            let size = StorageSizeCalculator.directorySize(at: Constants.App.historyDirectory)
             let formatted = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
             DispatchQueue.main.async {
                 storageSize = formatted
             }
         }
-    }
-
-    private func directorySize(at url: URL) -> Int {
-        let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey])
-        var total = 0
-        while let fileURL = enumerator?.nextObject() as? URL {
-            if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                total += size
-            }
-        }
-        return total
     }
 
     private func clearHistory() {

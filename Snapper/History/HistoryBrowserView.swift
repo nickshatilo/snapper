@@ -1,14 +1,17 @@
 import SwiftUI
 import SwiftData
 
+private let historyThumbnailCache = NSCache<NSString, NSImage>()
+
 struct HistoryBrowserView: View {
     let historyManager: HistoryManager
     @State private var records: [CaptureRecord] = []
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showGrid = true
     @State private var selectedFilter: CaptureMode?
     @State private var selectedRecords: Set<UUID> = []
-    private static let thumbnailCache = NSCache<NSString, NSImage>()
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 12)]
 
@@ -27,6 +30,18 @@ struct HistoryBrowserView: View {
             statusBar
         }
         .onAppear(perform: reloadRecords)
+        .onChange(of: searchText) { _, newValue in
+            searchDebounceTask?.cancel()
+            if newValue.isEmpty {
+                debouncedSearchText = ""
+            } else {
+                searchDebounceTask = Task {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard !Task.isCancelled else { return }
+                    debouncedSearchText = newValue
+                }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .historyDidChange)) { _ in
             reloadRecords()
         }
@@ -34,11 +49,12 @@ struct HistoryBrowserView: View {
 
     private var filteredRecords: [CaptureRecord] {
         var result = records
-        if !searchText.isEmpty {
+        if !debouncedSearchText.isEmpty {
+            let query = debouncedSearchText
             result = result.filter {
-                $0.ocrText?.localizedCaseInsensitiveContains(searchText) == true ||
-                $0.applicationName?.localizedCaseInsensitiveContains(searchText) == true ||
-                $0.captureType.localizedCaseInsensitiveContains(searchText)
+                $0.ocrText?.localizedCaseInsensitiveContains(query) == true ||
+                $0.applicationName?.localizedCaseInsensitiveContains(query) == true ||
+                $0.captureType.localizedCaseInsensitiveContains(query)
             }
         }
         if let filter = selectedFilter {
@@ -132,23 +148,8 @@ struct HistoryBrowserView: View {
     }
 
     private func historyGridItem(_ record: CaptureRecord) -> some View {
-        let thumbnail = thumbnailImage(for: record.thumbnailPath)
         return VStack(alignment: .leading, spacing: 4) {
-            if let image = thumbnail {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(.quaternary)
-                    .aspectRatio(16/9, contentMode: .fit)
-                    .overlay {
-                        Image(systemName: "photo")
-                            .font(.title)
-                            .foregroundStyle(.tertiary)
-                    }
-            }
+            HistoryThumbnailImageView(path: record.thumbnailPath, cornerRadius: 6)
 
             Text(record.captureType.capitalized)
                 .font(.caption)
@@ -197,15 +198,9 @@ struct HistoryBrowserView: View {
     }
 
     private func historyListRow(_ record: CaptureRecord) -> some View {
-        let thumbnail = thumbnailImage(for: record.thumbnailPath)
         return HStack(spacing: 12) {
-            if let image = thumbnail {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 80, height: 50)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
+            HistoryThumbnailImageView(path: record.thumbnailPath, cornerRadius: 4)
+                .frame(width: 80, height: 50)
 
             VStack(alignment: .leading) {
                 Text(record.captureType.capitalized)
@@ -247,22 +242,69 @@ struct HistoryBrowserView: View {
         selectedRecords = selectedRecords.intersection(validIDs)
     }
 
-    private func thumbnailImage(for path: String?) -> NSImage? {
-        guard let path else { return nil }
-        let key = path as NSString
-        if let cached = Self.thumbnailCache.object(forKey: key) {
-            return cached
-        }
-        guard let image = NSImage(contentsOfFile: path) else {
-            return nil
-        }
-        Self.thumbnailCache.setObject(image, forKey: key)
-        return image
-    }
-
     private func removeThumbnailFromCache(for record: CaptureRecord) {
         if let path = record.thumbnailPath {
-            Self.thumbnailCache.removeObject(forKey: path as NSString)
+            historyThumbnailCache.removeObject(forKey: path as NSString)
+        }
+    }
+}
+
+private struct HistoryThumbnailImageView: View {
+    let path: String?
+    let cornerRadius: CGFloat
+    @State private var image: NSImage?
+    @State private var loadingPath: String?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            } else {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(.quaternary)
+                    .aspectRatio(16/9, contentMode: .fit)
+                    .overlay {
+                        Image(systemName: "photo")
+                            .font(.title)
+                            .foregroundStyle(.tertiary)
+                    }
+            }
+        }
+        .onAppear {
+            loadThumbnailIfNeeded()
+        }
+        .onChange(of: path) { _, _ in
+            image = nil
+            loadingPath = nil
+            loadThumbnailIfNeeded()
+        }
+    }
+
+    private func loadThumbnailIfNeeded() {
+        guard let path else {
+            image = nil
+            return
+        }
+        let key = path as NSString
+        if let cached = historyThumbnailCache.object(forKey: key) {
+            image = cached
+            return
+        }
+        guard loadingPath != path else { return }
+        loadingPath = path
+
+        DispatchQueue.global(qos: .utility).async {
+            let loaded = NSImage(contentsOfFile: path)
+            if let loaded {
+                historyThumbnailCache.setObject(loaded, forKey: key)
+            }
+            DispatchQueue.main.async {
+                guard loadingPath == path else { return }
+                image = loaded
+            }
         }
     }
 }

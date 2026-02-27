@@ -50,6 +50,7 @@ struct CaptureSettingsView: View {
                 Toggle("Show magnifier", isOn: $appState.showMagnifier)
                 Toggle("Freeze screen during selection", isOn: $appState.freezeScreen)
                 Toggle("Save at Retina resolution (2x)", isOn: $appState.retina2x)
+                Toggle("Include window shadows", isOn: $appState.windowCaptureIncludeShadow)
             }
         }
         .formStyle(.grouped)

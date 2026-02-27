@@ -11,7 +11,7 @@ final class AreaSelectorWindowController {
         self.completion = completion
     }
 
-    func show(freezeScreen: Bool) {
+    func show(freezeScreen: Bool, showMagnifier: Bool = false) {
         didFinish = false
         installKeyMonitor()
         NSApp.activate(ignoringOtherApps: true)
@@ -32,6 +32,8 @@ final class AreaSelectorWindowController {
             window.hasShadow = false
 
             let overlayView = AreaSelectorOverlayView(frame: screen.frame)
+            overlayView.showsMagnifier = showMagnifier
+            overlayView.frozenImage = freezeScreen ? captureImage(for: screen) : nil
             overlayView.onSelectionComplete = { [weak self] rect in
                 guard let self else { return }
                 // Convert from view coordinates to screen coordinates
@@ -61,7 +63,7 @@ final class AreaSelectorWindowController {
             self.localKeyMonitor = nil
         }
         for window in overlayWindows {
-            window.orderOut(nil)
+            window.close()
         }
         overlayWindows.removeAll()
         overlayViews.removeAll()
@@ -89,6 +91,13 @@ final class AreaSelectorWindowController {
         didFinish = true
         close()
         completion(result)
+    }
+
+    private func captureImage(for screen: NSScreen) -> CGImage? {
+        guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
+            return nil
+        }
+        return CGDisplayCreateImage(displayID)
     }
 }
 

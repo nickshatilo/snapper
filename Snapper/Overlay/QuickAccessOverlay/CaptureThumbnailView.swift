@@ -23,8 +23,7 @@ struct CaptureThumbnailView: View {
                 .shadow(color: Color.black.opacity(0.25), radius: 6, y: 2)
                 .contentShape(RoundedRectangle(cornerRadius: 10))
                 .onTapGesture {
-                    NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(capture.image))
-                    manager.removeCapture(capture.id)
+                    openInEditorAndDismiss()
                 }
 
             if isHovering {
@@ -59,22 +58,30 @@ struct CaptureThumbnailView: View {
     private var actionButtons: some View {
         HStack(spacing: 4) {
             OverlayIconButton(icon: "doc.on.doc", tooltip: "Copy") {
-                PasteboardHelper.copyImage(capture.image)
+                if let image = capture.resolvedImage() {
+                    PasteboardHelper.copyImage(image)
+                }
             }
             OverlayIconButton(icon: "square.and.arrow.down", tooltip: "Reveal File") {
                 if let url = capture.savedURL {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
             }
+            OverlayIconButton(icon: "pin", tooltip: "Pin") {
+                if let image = capture.resolvedImage() {
+                    NotificationCenter.default.post(name: .pinScreenshot, object: ImageWrapper(image))
+                    manager.removeCapture(capture.id)
+                }
+            }
             OverlayIconButton(icon: "pencil", tooltip: "Edit") {
-                NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(capture.image))
-                manager.removeCapture(capture.id)
+                openInEditorAndDismiss()
             }
             OverlayIconButton(icon: "trash", tooltip: "Delete") {
                 manager.removeCapture(capture.id)
                 if let url = capture.savedURL {
                     try? FileManager.default.removeItem(at: url)
                 }
+                NotificationCenter.default.post(name: .deleteHistoryRecord, object: capture.recordID)
             }
         }
         .padding(4)
@@ -89,9 +96,12 @@ struct CaptureThumbnailView: View {
             return NSItemProvider(object: savedURL as NSURL)
         }
 
+        guard let image = capture.resolvedImage() else {
+            return NSItemProvider()
+        }
         let nsImage = NSImage(
-            cgImage: capture.image,
-            size: NSSize(width: capture.image.width, height: capture.image.height)
+            cgImage: image,
+            size: NSSize(width: image.width, height: image.height)
         )
         let provider = NSItemProvider(object: nsImage)
         provider.suggestedName = "Snapper Screenshot"
@@ -109,6 +119,12 @@ struct CaptureThumbnailView: View {
         }
 
         return provider
+    }
+
+    private func openInEditorAndDismiss() {
+        guard let image = capture.resolvedImage() else { return }
+        NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(image))
+        manager.removeCapture(capture.id)
     }
 
 }

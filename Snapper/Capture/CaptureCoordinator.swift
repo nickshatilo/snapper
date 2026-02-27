@@ -6,14 +6,21 @@ final class CaptureCoordinator {
     private let captureService = ScreenCaptureService()
     private var areaSelectorController: AreaSelectorWindowController?
     private var windowSelectorController: WindowSelectorController?
+    private var observerTokens: [NSObjectProtocol] = []
 
     init(appState: AppState) {
         self.appState = appState
         observeCaptureTriggers()
     }
 
+    deinit {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
     private func observeCaptureTriggers() {
-        NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: .startCapture,
             object: nil,
             queue: .main
@@ -21,6 +28,25 @@ final class CaptureCoordinator {
             guard let mode = notification.object as? CaptureMode else { return }
             self?.startCapture(mode: mode)
         }
+        observerTokens.append(token)
+
+        let ocrFinishToken = NotificationCenter.default.addObserver(
+            forName: .ocrCaptureDidFinish,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.appState.isCapturing = false
+        }
+        observerTokens.append(ocrFinishToken)
+
+        let timerFinishToken = NotificationCenter.default.addObserver(
+            forName: .timerCaptureDidFinish,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.appState.isCapturing = false
+        }
+        observerTokens.append(timerFinishToken)
     }
 
     func startCapture(mode: CaptureMode) {
@@ -38,17 +64,15 @@ final class CaptureCoordinator {
             captureWindow(options: options)
         case .ocr:
             NotificationCenter.default.post(name: .startOCRCapture, object: options)
-            appState.isCapturing = false
         case .timer:
             NotificationCenter.default.post(name: .startTimerCapture, object: TimerCaptureRequest.default)
-            appState.isCapturing = false
         }
     }
 
     private func captureFullscreen(options: CaptureOptions) {
         Task {
             do {
-                let image = try await captureService.captureDisplay()
+                let image = try await captureService.captureDisplay(retinaScale: options.retina2x)
                 let result = CaptureResult(
                     image: image,
                     mode: .fullscreen,
@@ -65,6 +89,8 @@ final class CaptureCoordinator {
     }
 
     private func captureArea(options: CaptureOptions) {
+        areaSelectorController?.close()
+        areaSelectorController = nil
         areaSelectorController = AreaSelectorWindowController { [weak self] rect in
             guard let self else { return }
             self.areaSelectorController?.close()
@@ -77,7 +103,7 @@ final class CaptureCoordinator {
 
             Task {
                 do {
-                    let image = try await self.captureService.captureRect(rect)
+                    let image = try await self.captureService.captureRect(rect, retinaScale: options.retina2x)
                     let result = CaptureResult(
                         image: image,
                         mode: .area,
@@ -92,10 +118,12 @@ final class CaptureCoordinator {
                 }
             }
         }
-        areaSelectorController?.show(freezeScreen: options.freezeScreen)
+        areaSelectorController?.show(freezeScreen: options.freezeScreen, showMagnifier: options.showMagnifier)
     }
 
     private func captureWindow(options: CaptureOptions) {
+        windowSelectorController?.close()
+        windowSelectorController = nil
         windowSelectorController = WindowSelectorController { [weak self] windowInfo in
             guard let self else { return }
             self.windowSelectorController?.close()
@@ -108,7 +136,11 @@ final class CaptureCoordinator {
 
             Task {
                 do {
-                    let image = try await self.captureService.captureWindow(windowInfo.window)
+                    let image = try await self.captureService.captureWindow(
+                        windowInfo.window,
+                        retinaScale: options.retina2x,
+                        includeShadow: options.includeShadow
+                    )
                     let result = CaptureResult(
                         image: image,
                         mode: .window,
@@ -140,8 +172,10 @@ final class CaptureCoordinator {
             SoundPlayer.playCapture(options.captureSound)
         }
 
+        let recordID = UUID()
         DispatchQueue.global(qos: .userInitiated).async {
             var savedURL: URL?
+            var fileSize = 0
             if options.saveToFile {
                 let filename = FileNameGenerator.generate(
                     pattern: options.filenamePattern,
@@ -153,13 +187,21 @@ final class CaptureCoordinator {
                     .appendingPathExtension(options.format.fileExtension)
                 if ImageUtils.save(result.image, to: url, format: options.format, jpegQuality: options.jpegQuality) {
                     savedURL = url
+                    fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
                 }
             }
+            let thumbnail = ImageUtils.generateThumbnail(result.image)
 
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: .captureCompleted,
-                    object: CaptureCompletedInfo(result: result, savedURL: savedURL)
+                    object: CaptureCompletedInfo(
+                        recordID: recordID,
+                        result: result,
+                        savedURL: savedURL,
+                        fileSize: fileSize,
+                        thumbnail: thumbnail
+                    )
                 )
             }
         }
@@ -179,12 +221,18 @@ final class CaptureCoordinator {
 }
 
 struct CaptureCompletedInfo {
+    let recordID: UUID
     let result: CaptureResult
     let savedURL: URL?
+    let fileSize: Int
+    let thumbnail: CGImage?
 }
 
 extension Notification.Name {
     static let showAllInOneHUD = Notification.Name("showAllInOneHUD")
-static let startOCRCapture = Notification.Name("startOCRCapture")
+    static let startOCRCapture = Notification.Name("startOCRCapture")
     static let startTimerCapture = Notification.Name("startTimerCapture")
+    static let deleteHistoryRecord = Notification.Name("deleteHistoryRecord")
+    static let ocrCaptureDidFinish = Notification.Name("ocrCaptureDidFinish")
+    static let timerCaptureDidFinish = Notification.Name("timerCaptureDidFinish")
 }

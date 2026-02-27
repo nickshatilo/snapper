@@ -6,6 +6,7 @@ final class CanvasState {
         let baseImage: CGImage
         let annotations: [any Annotation]
         let selectedAnnotationID: UUID?
+        let selectedAnnotationIDs: Set<UUID>
     }
 
     var baseImage: CGImage
@@ -15,6 +16,7 @@ final class CanvasState {
     var zoomLevel: CGFloat = 1.0
     var panOffset: CGPoint = .zero
     var selectedAnnotationID: UUID?
+    var selectedAnnotationIDs: Set<UUID> = []
     let undoManager = UndoRedoManager()
 
     var imageWidth: Int { baseImage.width }
@@ -33,6 +35,10 @@ final class CanvasState {
     func removeAnnotation(id: UUID) {
         if let idx = annotations.firstIndex(where: { $0.id == id }) {
             let annotation = annotations.remove(at: idx)
+            selectedAnnotationIDs.remove(id)
+            if selectedAnnotationID == id {
+                selectedAnnotationID = selectedAnnotationIDs.first
+            }
             undoManager.recordRemove(annotation: annotation, state: self)
         }
     }
@@ -42,12 +48,19 @@ final class CanvasState {
         return annotations.first(where: { $0.id == selectedAnnotationID })
     }
 
+    func selectedAnnotations() -> [any Annotation] {
+        let ids = effectiveSelectedAnnotationIDs()
+        guard !ids.isEmpty else { return [] }
+        return annotations.filter { ids.contains($0.id) }
+    }
+
     func replaceAnnotation(_ updatedAnnotation: any Annotation, recordUndo: Bool = true) {
         guard let index = annotations.firstIndex(where: { $0.id == updatedAnnotation.id }) else { return }
 
         let previous = annotations[index].duplicate()
         annotations[index] = updatedAnnotation
         selectedAnnotationID = updatedAnnotation.id
+        selectedAnnotationIDs.insert(updatedAnnotation.id)
 
         if recordUndo {
             undoManager.recordModify(
@@ -64,6 +77,7 @@ final class CanvasState {
 
         if index == annotations.count - 1 {
             selectedAnnotationID = id
+            selectedAnnotationIDs = [id]
             return true
         }
 
@@ -74,6 +88,7 @@ final class CanvasState {
         annotation.zOrder = max(maxZOrder + 1, annotation.zOrder + 1)
         annotations.append(annotation)
         selectedAnnotationID = id
+        selectedAnnotationIDs = [id]
 
         if recordUndo, let oldSnapshot {
             let newSnapshot = makeSnapshot()
@@ -86,25 +101,17 @@ final class CanvasState {
     func makeSnapshot() -> Snapshot {
         Snapshot(
             baseImage: baseImage,
-            annotations: annotations.map { annotation in
-                let copy = annotation.duplicate()
-                copy.zOrder = annotation.zOrder
-                copy.isVisible = annotation.isVisible
-                return copy
-            },
-            selectedAnnotationID: selectedAnnotationID
+            annotations: annotations.map { $0.duplicate() },
+            selectedAnnotationID: selectedAnnotationID,
+            selectedAnnotationIDs: selectedAnnotationIDs
         )
     }
 
     func restore(from snapshot: Snapshot) {
         baseImage = snapshot.baseImage
-        annotations = snapshot.annotations.map { annotation in
-            let copy = annotation.duplicate()
-            copy.zOrder = annotation.zOrder
-            copy.isVisible = annotation.isVisible
-            return copy
-        }
+        annotations = snapshot.annotations.map { $0.duplicate() }
         selectedAnnotationID = snapshot.selectedAnnotationID
+        selectedAnnotationIDs = snapshot.selectedAnnotationIDs
     }
 
     @discardableResult
@@ -182,9 +189,17 @@ final class CanvasState {
         baseImage = croppedBaseImage
         annotations = translatedAnnotations
         selectedAnnotationID = nil
+        selectedAnnotationIDs = []
         let newSnapshot = makeSnapshot()
         undoManager.recordSnapshot(oldState: oldSnapshot, newState: newSnapshot, state: self)
         return true
+    }
+
+    private func effectiveSelectedAnnotationIDs() -> Set<UUID> {
+        if selectedAnnotationIDs.isEmpty, let selectedAnnotationID {
+            return [selectedAnnotationID]
+        }
+        return selectedAnnotationIDs
     }
 
     func renderFinalImage() -> CGImage? {
