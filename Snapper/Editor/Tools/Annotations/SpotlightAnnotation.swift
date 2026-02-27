@@ -1,7 +1,7 @@
 import AppKit
 
 final class SpotlightAnnotation: Annotation {
-    let id = UUID()
+    let id: UUID
     let type: ToolType = .spotlight
     var zOrder: Int = 0
     var isVisible: Bool = true
@@ -11,7 +11,8 @@ final class SpotlightAnnotation: Annotation {
 
     var boundingRect: CGRect { .infinite }
 
-    init(rect: CGRect, dimOpacity: CGFloat) {
+    init(id: UUID = UUID(), rect: CGRect, dimOpacity: CGFloat) {
+        self.id = id
         self.rect = rect
         self.dimOpacity = dimOpacity
     }
@@ -36,5 +37,13 @@ final class SpotlightAnnotation: Annotation {
 
     func hitTest(point: CGPoint) -> Bool {
         rect.contains(point)
+    }
+
+    func duplicate() -> any Annotation {
+        SpotlightAnnotation(
+            id: id,
+            rect: rect,
+            dimOpacity: dimOpacity
+        )
     }
 }

@@ -1,7 +1,7 @@
 import AppKit
 
 final class CounterAnnotation: Annotation {
-    let id = UUID()
+    let id: UUID
     let type: ToolType = .counter
     var zOrder: Int = 0
     var isVisible: Bool = true
@@ -16,7 +16,8 @@ final class CounterAnnotation: Annotation {
         CGRect(x: position.x - radius, y: position.y - radius, width: radius * 2, height: radius * 2)
     }
 
-    init(position: NSPoint, value: Int, style: CounterStyle, color: NSColor) {
+    init(id: UUID = UUID(), position: NSPoint, value: Int, style: CounterStyle, color: NSColor) {
+        self.id = id
         self.position = position
         self.value = value
         self.style = style
@@ -50,5 +51,15 @@ final class CounterAnnotation: Annotation {
         NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
+    }
+
+    func duplicate() -> any Annotation {
+        CounterAnnotation(
+            id: id,
+            position: position,
+            value: value,
+            style: style,
+            color: color
+        )
     }
 }

@@ -8,7 +8,7 @@ struct AnnotationEditorView: View {
         VStack(spacing: 0) {
             // Top tool options bar
             HStack(spacing: 10) {
-                ToolOptionsView(toolManager: toolManager)
+                ToolOptionsView(canvasState: canvasState, toolManager: toolManager)
 
                 if canvasState.isOCRProcessing {
                     Spacer()
@@ -17,7 +17,7 @@ struct AnnotationEditorView: View {
                     Text("Reading text...")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else if toolManager.currentTool == .textSelect {
+                } else if toolManager.currentTool == .ocr {
                     Spacer()
                     Text(
                         canvasState.recognizedTextRegionCount > 0
@@ -108,10 +108,15 @@ struct AnnotationEditorView: View {
     }
 
     private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        guard !isTextInputActive() else {
+            return .ignored
+        }
+
         // Tool shortcuts
         if keyPress.modifiers.isEmpty {
             switch keyPress.characters.lowercased() {
             case "v": toolManager.currentTool = .textSelect; return .handled
+            case "o": toolManager.currentTool = .ocr; return .handled
             case "m": toolManager.currentTool = .hand; return .handled
             case "a": toolManager.currentTool = .arrow; return .handled
             case "r": toolManager.currentTool = .rectangle; return .handled
@@ -150,6 +155,23 @@ struct AnnotationEditorView: View {
         }
 
         return .ignored
+    }
+
+    private func isTextInputActive() -> Bool {
+        guard let keyWindow = NSApp.keyWindow,
+              let firstResponder = keyWindow.firstResponder else {
+            return false
+        }
+
+        if firstResponder is NSTextView {
+            return true
+        }
+
+        if let view = firstResponder as? NSView {
+            return view is NSTextField || view is NSSearchField
+        }
+
+        return false
     }
 
     private func exportToClipboard() {

@@ -1,10 +1,13 @@
 import AppKit
 import SwiftUI
 
-final class AnnotationEditorWindow {
-    private var window: NSWindow?
+final class AnnotationEditorWindow: NSObject, NSWindowDelegate {
+    private static var activeWindows: [UUID: AnnotationEditorWindow] = [:]
 
-    static func open(with image: CGImage) {
+    private let id = UUID()
+    private let window: NSWindow
+
+    private init(image: CGImage) {
         let canvasState = CanvasState(image: image)
         let toolManager = ToolManager()
         let view = AnnotationEditorView(canvasState: canvasState, toolManager: toolManager)
@@ -23,7 +26,19 @@ final class AnnotationEditorWindow {
         window.setContentSize(NSSize(width: max(720, targetWidth), height: max(520, targetHeight)))
         window.minSize = NSSize(width: 600, height: 400)
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        self.window = window
+        super.init()
+        self.window.delegate = self
+    }
+
+    static func open(with image: CGImage) {
+        let editorWindow = AnnotationEditorWindow(image: image)
+        activeWindows[editorWindow.id] = editorWindow
+        editorWindow.window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        Self.activeWindows.removeValue(forKey: id)
     }
 }

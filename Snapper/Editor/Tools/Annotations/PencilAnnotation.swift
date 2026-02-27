@@ -1,7 +1,7 @@
 import AppKit
 
 final class PencilAnnotation: Annotation {
-    let id = UUID()
+    let id: UUID
     let type: ToolType = .pencil
     var zOrder: Int = 0
     var isVisible: Bool = true
@@ -25,7 +25,8 @@ final class PencilAnnotation: Annotation {
                        height: maxY - minY + strokeWidth * 2)
     }
 
-    init(points: [NSPoint], color: NSColor, strokeWidth: CGFloat) {
+    init(id: UUID = UUID(), points: [NSPoint], color: NSColor, strokeWidth: CGFloat) {
+        self.id = id
         self.points = points
         self.color = color
         self.strokeWidth = strokeWidth
@@ -80,5 +81,14 @@ final class PencilAnnotation: Annotation {
             }
         }
         return result
+    }
+
+    func duplicate() -> any Annotation {
+        PencilAnnotation(
+            id: id,
+            points: points,
+            color: color,
+            strokeWidth: strokeWidth
+        )
     }
 }

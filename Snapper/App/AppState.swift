@@ -156,6 +156,7 @@ enum ImageFormat: String, CaseIterable {
 }
 
 enum CaptureSound: String, CaseIterable {
+    case cameraShot
     case glass
     case tink
     case pop
@@ -165,6 +166,7 @@ enum CaptureSound: String, CaseIterable {
 
     var displayName: String {
         switch self {
+        case .cameraShot: return "Camera Shot"
         case .glass: return "Glass"
         case .tink: return "Tink"
         case .pop: return "Pop"
@@ -176,6 +178,7 @@ enum CaptureSound: String, CaseIterable {
 
     var nsSoundName: NSSound.Name {
         switch self {
+        case .cameraShot: return NSSound.Name("PhotoShutter")
         case .glass: return NSSound.Name("Glass")
         case .tink: return NSSound.Name("Tink")
         case .pop: return NSSound.Name("Pop")

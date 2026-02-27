@@ -7,12 +7,19 @@ final class ToolManager {
         didSet {
             // Keep fill color in sync with stroke hue when fill is enabled.
             guard let fill = fillColor else { return }
-            let alpha = max(fill.alphaComponent, 0.3)
+            let alpha = fill.alphaComponent
             fillColor = strokeColor.withAlphaComponent(alpha)
         }
     }
     var strokeWidth: CGFloat = 3.0
     var fillColor: NSColor? = nil
+    var fillOpacity: CGFloat = 0.3 {
+        didSet {
+            let clampedOpacity = min(max(fillOpacity, 0), 1)
+            guard let fill = fillColor else { return }
+            fillColor = fill.withAlphaComponent(clampedOpacity)
+        }
+    }
     var fontSize: CGFloat = 16
     var fontName: String = "Helvetica"
     var arrowStyle: ArrowStyle = .straight
@@ -35,6 +42,8 @@ final class ToolManager {
         switch currentTool {
         case .textSelect:
             break
+        case .ocr:
+            break
         case .hand:
             break
         case .pencil:
@@ -48,6 +57,7 @@ final class ToolManager {
                 color: strokeColor
             )
             canvasState.addAnnotation(annotation)
+            canvasState.selectedAnnotationID = annotation.id
         case .counter:
             let annotation = CounterAnnotation(
                 position: point,
@@ -56,6 +66,7 @@ final class ToolManager {
                 color: strokeColor
             )
             canvasState.addAnnotation(annotation)
+            canvasState.selectedAnnotationID = annotation.id
             counterValue += 1
         default:
             break
@@ -74,6 +85,8 @@ final class ToolManager {
 
         switch currentTool {
         case .textSelect:
+            annotation = nil
+        case .ocr:
             annotation = nil
         case .hand:
             annotation = nil
@@ -141,7 +154,11 @@ final class ToolManager {
                 width: abs(point.x - start.x),
                 height: abs(point.y - start.y)
             )
-            annotation = BlurAnnotation(rect: rect, intensity: blurIntensity)
+            annotation = BlurAnnotation(
+                rect: rect,
+                intensity: blurIntensity,
+                sourceImage: canvasState.baseImage
+            )
         case .pixelate:
             let rect = CGRect(
                 x: min(start.x, point.x),
@@ -149,7 +166,11 @@ final class ToolManager {
                 width: abs(point.x - start.x),
                 height: abs(point.y - start.y)
             )
-            annotation = PixelateAnnotation(rect: rect, blockSize: pixelateBlockSize)
+            annotation = PixelateAnnotation(
+                rect: rect,
+                blockSize: pixelateBlockSize,
+                sourceImage: canvasState.baseImage
+            )
         case .spotlight:
             let rect = CGRect(
                 x: min(start.x, point.x),
@@ -159,13 +180,7 @@ final class ToolManager {
             )
             annotation = SpotlightAnnotation(rect: rect, dimOpacity: spotlightDimOpacity)
         case .crop:
-            let rect = CGRect(
-                x: min(start.x, point.x),
-                y: min(start.y, point.y),
-                width: abs(point.x - start.x),
-                height: abs(point.y - start.y)
-            )
-            annotation = CropAnnotation(rect: rect)
+            annotation = nil
         default:
             annotation = nil
         }
@@ -173,18 +188,28 @@ final class ToolManager {
         if let annotation {
             activeAnnotation = annotation
             canvasState.annotations.append(annotation)
+            canvasState.selectedAnnotationID = annotation.id
         }
     }
 
-    func mouseUp(at point: NSPoint, canvasState: CanvasState) {
+    @discardableResult
+    func mouseUp(at point: NSPoint, canvasState: CanvasState) -> UUID? {
+        var committedAnnotationID: UUID?
+
         if let active = activeAnnotation {
             // Commit the annotation properly via addAnnotation for undo support
             canvasState.annotations.removeAll { $0.id == active.id }
+            if active is CropAnnotation {
+                canvasState.annotations.removeAll { $0 is CropAnnotation }
+            }
             canvasState.addAnnotation(active)
+            canvasState.selectedAnnotationID = active.id
+            committedAnnotationID = active.id
         }
         activeAnnotation = nil
         dragStartPoint = nil
         pencilPoints = []
+        return committedAnnotationID
     }
 }
 

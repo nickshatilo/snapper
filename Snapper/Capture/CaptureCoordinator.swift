@@ -36,9 +36,6 @@ final class CaptureCoordinator {
             captureArea(options: options)
         case .window:
             captureWindow(options: options)
-        case .scrolling:
-            NotificationCenter.default.post(name: .startScrollingCapture, object: options)
-            appState.isCapturing = false
         case .ocr:
             NotificationCenter.default.post(name: .startOCRCapture, object: options)
             appState.isCapturing = false
@@ -188,7 +185,6 @@ struct CaptureCompletedInfo {
 
 extension Notification.Name {
     static let showAllInOneHUD = Notification.Name("showAllInOneHUD")
-    static let startScrollingCapture = Notification.Name("startScrollingCapture")
-    static let startOCRCapture = Notification.Name("startOCRCapture")
+static let startOCRCapture = Notification.Name("startOCRCapture")
     static let startTimerCapture = Notification.Name("startTimerCapture")
 }

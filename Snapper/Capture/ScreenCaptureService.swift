@@ -54,7 +54,11 @@ final class ScreenCaptureService {
         return try await captureRect(rect, using: context)
     }
 
-    func prepareRectCapture(for rect: CGRect, content: SCShareableContent? = nil) async throws -> RectCaptureContext {
+    func prepareRectCapture(
+        for rect: CGRect,
+        content: SCShareableContent? = nil,
+        excludingWindowIDs: [CGWindowID] = []
+    ) async throws -> RectCaptureContext {
         try ensureScreenCapturePermission()
         let resolvedContent: SCShareableContent
         if let content {
@@ -74,7 +78,14 @@ final class ScreenCaptureService {
         )
 
         let scale = displayScaleFactor(for: display)
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let excludedWindows: [SCWindow]
+        if excludingWindowIDs.isEmpty {
+            excludedWindows = []
+        } else {
+            let excludedSet = Set(excludingWindowIDs)
+            excludedWindows = resolvedContent.windows.filter { excludedSet.contains($0.windowID) }
+        }
+        let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
         let config = SCStreamConfiguration()
         config.showsCursor = false
         config.captureResolution = .best
@@ -163,6 +174,7 @@ final class ScreenCaptureService {
         }
         return 2.0
     }
+
 }
 
 enum CaptureError: Error, LocalizedError {
@@ -170,15 +182,12 @@ enum CaptureError: Error, LocalizedError {
     case noWindow
     case cropFailed
     case permissionDenied
-    case stitchingFailed
-
     var errorDescription: String? {
         switch self {
         case .noDisplay: return "No display found"
         case .noWindow: return "No window found"
         case .cropFailed: return "Failed to crop image"
         case .permissionDenied: return "Screen capture permission denied"
-        case .stitchingFailed: return "Failed to stitch images"
         }
     }
 }

@@ -417,7 +417,6 @@ struct SettingsView: View {
         case .captureFullscreen: return "⌘⇧3"
         case .captureArea: return "⌘⇧4"
         case .captureWindow: return "—"
-        case .scrollingCapture: return "—"
         case .ocrCapture: return "—"
         case .timerCapture: return "—"
         case .toggleDesktopIcons: return "—"

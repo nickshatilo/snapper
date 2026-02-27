@@ -72,7 +72,12 @@ final class AreaSelectorWindowController {
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if event.keyCode == 53 { // Escape
-                self.finish(with: nil)
+                let discardedAnySelection = self.overlayViews.reduce(false) { partialResult, overlayView in
+                    overlayView.discardSelection() || partialResult
+                }
+                if !discardedAnySelection {
+                    self.finish(with: nil)
+                }
                 return nil
             }
             return event

@@ -2,6 +2,7 @@ import AppKit
 
 enum SoundPlayer {
     private static let fallbackSoundNames: [NSSound.Name] = [
+        NSSound.Name("PhotoShutter"),
         NSSound.Name("Glass"),
         NSSound.Name("Tink"),
         NSSound.Name("Pop"),

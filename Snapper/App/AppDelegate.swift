@@ -9,7 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quickAccessManager: QuickAccessManager?
     private var historyManager: HistoryManager?
     private var historyBrowserWindow: HistoryBrowserWindow?
-    private var scrollingCaptureController: ScrollingCaptureController?
     private var ocrCaptureController: OCRCaptureController?
     private var timerCaptureController: TimerCaptureController?
     private var updateManager: UpdateManager?
@@ -43,7 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         historyBrowserWindow = HistoryBrowserWindow(historyManager: historyManager!)
 
         // Advanced capture modes
-        scrollingCaptureController = ScrollingCaptureController(appState: appState)
         ocrCaptureController = OCRCaptureController()
         timerCaptureController = TimerCaptureController()
 

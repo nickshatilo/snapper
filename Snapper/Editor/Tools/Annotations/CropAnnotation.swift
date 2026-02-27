@@ -1,7 +1,7 @@
 import AppKit
 
 final class CropAnnotation: Annotation {
-    let id = UUID()
+    let id: UUID
     let type: ToolType = .crop
     var zOrder: Int = 999
     var isVisible: Bool = true
@@ -10,7 +10,8 @@ final class CropAnnotation: Annotation {
 
     var boundingRect: CGRect { rect }
 
-    init(rect: CGRect) {
+    init(id: UUID = UUID(), rect: CGRect) {
+        self.id = id
         self.rect = rect
     }
 
@@ -74,5 +75,9 @@ final class CropAnnotation: Annotation {
         }
 
         context.restoreGState()
+    }
+
+    func duplicate() -> any Annotation {
+        CropAnnotation(id: id, rect: rect)
     }
 }

@@ -1,7 +1,7 @@
 import AppKit
 
 final class LineAnnotation: Annotation {
-    let id = UUID()
+    let id: UUID
     let type: ToolType = .line
     var zOrder: Int = 0
     var isVisible: Bool = true
@@ -21,7 +21,15 @@ final class LineAnnotation: Annotation {
         )
     }
 
-    init(start: NSPoint, end: NSPoint, color: NSColor, strokeWidth: CGFloat, isDashed: Bool = false) {
+    init(
+        id: UUID = UUID(),
+        start: NSPoint,
+        end: NSPoint,
+        color: NSColor,
+        strokeWidth: CGFloat,
+        isDashed: Bool = false
+    ) {
+        self.id = id
         self.start = start
         self.end = end
         self.color = color
@@ -43,5 +51,16 @@ final class LineAnnotation: Annotation {
         context.addLine(to: end)
         context.strokePath()
         context.restoreGState()
+    }
+
+    func duplicate() -> any Annotation {
+        LineAnnotation(
+            id: id,
+            start: start,
+            end: end,
+            color: color,
+            strokeWidth: strokeWidth,
+            isDashed: isDashed
+        )
     }
 }

@@ -9,7 +9,6 @@ struct AllInOneHUDView: View {
         (.fullscreen, "rectangle.dashed"),
         (.area, "crop"),
         (.window, "macwindow"),
-        (.scrolling, "scroll"),
         (.ocr, "text.viewfinder"),
     ]
 

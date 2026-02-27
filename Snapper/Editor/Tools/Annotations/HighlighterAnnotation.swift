@@ -1,7 +1,7 @@
 import AppKit
 
 final class HighlighterAnnotation: Annotation {
-    let id = UUID()
+    let id: UUID
     let type: ToolType = .highlighter
     var zOrder: Int = 0
     var isVisible: Bool = true
@@ -20,7 +20,14 @@ final class HighlighterAnnotation: Annotation {
         )
     }
 
-    init(start: NSPoint, end: NSPoint, color: NSColor, strokeWidth: CGFloat) {
+    init(
+        id: UUID = UUID(),
+        start: NSPoint,
+        end: NSPoint,
+        color: NSColor,
+        strokeWidth: CGFloat
+    ) {
+        self.id = id
         self.start = start
         self.end = end
         self.color = color
@@ -38,5 +45,15 @@ final class HighlighterAnnotation: Annotation {
         context.addLine(to: end)
         context.strokePath()
         context.restoreGState()
+    }
+
+    func duplicate() -> any Annotation {
+        HighlighterAnnotation(
+            id: id,
+            start: start,
+            end: end,
+            color: color,
+            strokeWidth: strokeWidth
+        )
     }
 }

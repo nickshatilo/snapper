@@ -106,28 +106,35 @@ final class AreaSelectorOverlayView: NSView {
         if let rect = selectionRect, rect.width > 5 && rect.height > 5 {
             onSelectionComplete?(rect)
         } else {
-            selectionRect = nil
+            discardSelection()
+        }
+    }
+
+    @discardableResult
+    func discardSelection() -> Bool {
+        let hadSelection = selectionStart != nil || selectionRect != nil || isDragging
+        selectionStart = nil
+        selectionRect = nil
+        isDragging = false
+        if hadSelection {
             needsDisplay = true
         }
+        return hadSelection
     }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
-            selectionStart = nil
-            selectionRect = nil
-            isDragging = false
-            needsDisplay = true
-            onCancel?()
+            if !discardSelection() {
+                onCancel?()
+            }
             return
         }
         super.keyDown(with: event)
     }
 
     override func cancelOperation(_ sender: Any?) {
-        selectionStart = nil
-        selectionRect = nil
-        isDragging = false
-        needsDisplay = true
-        onCancel?()
+        if !discardSelection() {
+            onCancel?()
+        }
     }
 }

@@ -23,6 +23,11 @@ final class UndoRedoManager {
         redoStack.removeAll()
     }
 
+    func recordSnapshot(oldState: CanvasState.Snapshot, newState: CanvasState.Snapshot, state: CanvasState) {
+        undoStack.append(.snapshot(old: oldState, new: newState))
+        redoStack.removeAll()
+    }
+
     func undo(state: CanvasState) {
         guard let action = undoStack.popLast() else { return }
         applyInverse(action, to: state)
@@ -43,6 +48,8 @@ final class UndoRedoManager {
             state.annotations.removeAll { $0.id == annotation.id }
         case .modify(_, let new):
             replaceAnnotation(with: new, in: state)
+        case .snapshot(_, let new):
+            state.restore(from: new)
         }
     }
 
@@ -54,6 +61,8 @@ final class UndoRedoManager {
             state.annotations.append(annotation)
         case .modify(let old, _):
             replaceAnnotation(with: old, in: state)
+        case .snapshot(let old, _):
+            state.restore(from: old)
         }
     }
 
@@ -70,4 +79,5 @@ private enum UndoAction {
     case add(any Annotation)
     case remove(any Annotation)
     case modify(old: any Annotation, new: any Annotation)
+    case snapshot(old: CanvasState.Snapshot, new: CanvasState.Snapshot)
 }

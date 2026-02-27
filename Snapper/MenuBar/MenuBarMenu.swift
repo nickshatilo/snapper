@@ -26,7 +26,6 @@ final class MenuBarMenu: NSMenu {
 
         addItem(NSMenuItem.separator())
 
-        addItem(makeItem("Scrolling Capture", action: #selector(scrollingCapture), key: "", modifiers: []))
         addItem(makeItem("Timer Capture", action: #selector(timerCapture), key: "", modifiers: []))
 
         addItem(NSMenuItem.separator())
@@ -67,10 +66,6 @@ final class MenuBarMenu: NSMenu {
 
     @objc private func captureWindow() {
         NotificationCenter.default.post(name: .startCapture, object: CaptureMode.window)
-    }
-
-    @objc private func scrollingCapture() {
-        NotificationCenter.default.post(name: .startCapture, object: CaptureMode.scrolling)
     }
 
     @objc private func timerCapture() {
