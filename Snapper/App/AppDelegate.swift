@@ -7,13 +7,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyManager: HotkeyManager?
     private var captureCoordinator: CaptureCoordinator?
     private var quickAccessManager: QuickAccessManager?
+    private var pinnedScreenshotManager: PinnedScreenshotManager?
     private var historyManager: HistoryManager?
     private var historyBrowserWindow: HistoryBrowserWindow?
     private var ocrCaptureController: OCRCaptureController?
     private var timerCaptureController: TimerCaptureController?
+    private var allInOneHUDPanel: AllInOneHUDPanel?
     private var updateManager: UpdateManager?
     private var onboardingWindowController: OnboardingWindowController?
     private var settingsWindow: NSWindow?
+    private var observerTokens: [NSObjectProtocol] = []
+
+    deinit {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ensureSingleInstance()
@@ -36,14 +45,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Overlay & Pinned
         quickAccessManager = QuickAccessManager(appState: appState)
+        pinnedScreenshotManager = PinnedScreenshotManager(appState: appState)
 
         // History
         historyManager = HistoryManager()
-        historyBrowserWindow = HistoryBrowserWindow(historyManager: historyManager!)
+        if let historyManager {
+            historyBrowserWindow = HistoryBrowserWindow(historyManager: historyManager)
+        }
 
         // Advanced capture modes
         ocrCaptureController = OCRCaptureController()
         timerCaptureController = TimerCaptureController()
+        allInOneHUDPanel = AllInOneHUDPanel()
 
         // Updates
         updateManager = UpdateManager()
@@ -66,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeyManager?.start()
         enforceReachability()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        appState.flushDefaults()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -99,29 +116,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func observeNotifications() {
-        NotificationCenter.default.addObserver(forName: .showHistory, object: nil, queue: .main) { [weak self] _ in
+        let showHistoryToken = NotificationCenter.default.addObserver(forName: .showHistory, object: nil, queue: .main) { [weak self] _ in
             self?.historyBrowserWindow?.show()
         }
+        observerTokens.append(showHistoryToken)
 
-        NotificationCenter.default.addObserver(forName: .showSettings, object: nil, queue: .main) { [weak self] _ in
+        let showSettingsToken = NotificationCenter.default.addObserver(forName: .showSettings, object: nil, queue: .main) { [weak self] _ in
             self?.showSettingsWindow()
         }
+        observerTokens.append(showSettingsToken)
 
-        NotificationCenter.default.addObserver(forName: .showOnboarding, object: nil, queue: .main) { [weak self] _ in
+        let showOnboardingToken = NotificationCenter.default.addObserver(forName: .showOnboarding, object: nil, queue: .main) { [weak self] _ in
             self?.showOnboarding()
         }
+        observerTokens.append(showOnboardingToken)
 
-        NotificationCenter.default.addObserver(forName: .requestPermissions, object: nil, queue: .main) { [weak self] _ in
+        let requestPermissionsToken = NotificationCenter.default.addObserver(forName: .requestPermissions, object: nil, queue: .main) { [weak self] _ in
             self?.requestPermissions()
         }
+        observerTokens.append(requestPermissionsToken)
 
-        NotificationCenter.default.addObserver(forName: .openEditor, object: nil, queue: .main) { notification in
+        let openEditorToken = NotificationCenter.default.addObserver(forName: .openEditor, object: nil, queue: .main) { notification in
             if let wrapper = notification.object as? ImageWrapper {
                 AnnotationEditorWindow.open(with: wrapper.image)
             }
         }
+        observerTokens.append(openEditorToken)
 
-        NotificationCenter.default.addObserver(forName: .menuBarVisibilityChanged, object: nil, queue: .main) { [weak self] notification in
+        let menuVisibilityToken = NotificationCenter.default.addObserver(
+            forName: .menuBarVisibilityChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
             guard let isVisible = notification.object as? Bool else { return }
             guard let self else { return }
 
@@ -138,42 +164,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.menuBarController?.hide()
             }
         }
+        observerTokens.append(menuVisibilityToken)
 
-        NotificationCenter.default.addObserver(forName: .historyRetentionChanged, object: nil, queue: .main) { [weak self] notification in
+        let historyRetentionToken = NotificationCenter.default.addObserver(
+            forName: .historyRetentionChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
             guard let days = notification.object as? Int else { return }
             guard days > 0 else { return }
-            Task { @MainActor in
-                self?.historyManager?.deleteOlderThan(days: days)
-            }
+            self?.historyManager?.deleteOlderThan(days: days)
         }
+        observerTokens.append(historyRetentionToken)
 
-        NotificationCenter.default.addObserver(forName: .clearHistoryRequested, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                self?.historyManager?.clearAll()
-            }
+        let clearHistoryToken = NotificationCenter.default.addObserver(
+            forName: .clearHistoryRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.historyManager?.clearAll()
         }
+        observerTokens.append(clearHistoryToken)
 
         // Save captures to history
-        NotificationCenter.default.addObserver(forName: .captureCompleted, object: nil, queue: .main) { [weak self] notification in
+        let captureCompletedToken = NotificationCenter.default.addObserver(
+            forName: .captureCompleted,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
             guard let info = notification.object as? CaptureCompletedInfo,
                   let historyManager = self?.historyManager else { return }
 
-            let recordID = UUID()
-            let image = info.result.image
-
             DispatchQueue.global(qos: .utility).async {
-                let thumbnailImage = ImageUtils.generateThumbnail(image) ?? image
-                let thumbnailURL = historyManager.saveThumbnail(thumbnailImage, for: recordID)
-                Task { @MainActor in
-                    historyManager.saveCapture(
-                        result: info.result,
-                        savedURL: info.savedURL,
-                        thumbnailURL: thumbnailURL,
-                        recordID: recordID
-                    )
-                }
+                let thumbnailURL = info.thumbnail.flatMap { historyManager.saveThumbnail($0, for: info.recordID) }
+                historyManager.saveCapture(
+                    result: info.result,
+                    savedURL: info.savedURL,
+                    thumbnailURL: thumbnailURL,
+                    recordID: info.recordID,
+                    fileSize: info.fileSize
+                )
             }
         }
+        observerTokens.append(captureCompletedToken)
+
+        let deleteHistoryRecordToken = NotificationCenter.default.addObserver(
+            forName: .deleteHistoryRecord,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let recordID = notification.object as? UUID else { return }
+            self?.historyManager?.delete(recordID: recordID)
+        }
+        observerTokens.append(deleteHistoryRecordToken)
     }
 
     private func showSettingsWindow() {

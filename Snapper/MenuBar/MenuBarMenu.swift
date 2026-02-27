@@ -22,6 +22,7 @@ final class MenuBarMenu: NSMenu {
 
         addItem(makeItem("Capture Fullscreen", action: #selector(captureFullscreen), key: "3", modifiers: [.command, .shift]))
         addItem(makeItem("Capture Area", action: #selector(captureArea), key: "4", modifiers: [.command, .shift]))
+        addItem(makeItem("All-in-One HUD", action: #selector(showAllInOneHUD), key: "5", modifiers: [.command, .shift]))
         addItem(makeItem("Capture Window", action: #selector(captureWindow), key: "", modifiers: []))
 
         addItem(NSMenuItem.separator())
@@ -66,6 +67,10 @@ final class MenuBarMenu: NSMenu {
 
     @objc private func captureWindow() {
         NotificationCenter.default.post(name: .startCapture, object: CaptureMode.window)
+    }
+
+    @objc private func showAllInOneHUD() {
+        NotificationCenter.default.post(name: .showAllInOneHUD, object: nil)
     }
 
     @objc private func timerCapture() {

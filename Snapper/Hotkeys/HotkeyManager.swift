@@ -14,6 +14,8 @@ final class HotkeyManager {
     private var fallbackLocalMonitor: Any?
     private var hasLoggedMissingPermission = false
     private var hasShownEventTapFailurePrompt = false
+    private var permissionRetryCount = 0
+    private let maxPermissionRetries = 40
     private let carbonSignature = OSType(0x534E5052) // "SNPR"
 
     var hasActiveGlobalHotkeys: Bool {
@@ -24,10 +26,18 @@ final class HotkeyManager {
         self.appState = appState
     }
 
+    deinit {
+        stop()
+    }
+
     func start() {
         installCarbonHotkeysIfNeeded()
         installEventTapIfAllowed()
-        installFallbackMonitorsIfNeeded()
+        if eventTap == nil {
+            installFallbackMonitorsIfNeeded()
+        } else {
+            removeFallbackMonitors()
+        }
         startPermissionRetry()
     }
 
@@ -44,21 +54,25 @@ final class HotkeyManager {
         }
         eventTap = nil
         runLoopSource = nil
-        if let fallbackGlobalMonitor {
-            NSEvent.removeMonitor(fallbackGlobalMonitor)
-            self.fallbackGlobalMonitor = nil
-        }
-        if let fallbackLocalMonitor {
-            NSEvent.removeMonitor(fallbackLocalMonitor)
-            self.fallbackLocalMonitor = nil
-        }
+        removeFallbackMonitors()
         unregisterCarbonHotkeys()
     }
 
     private func startPermissionRetry() {
         guard permissionRetryTimer == nil, eventTap == nil else { return }
-        permissionRetryTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.installEventTapIfAllowed()
+        permissionRetryCount = 0
+        permissionRetryTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            self.permissionRetryCount += 1
+            if self.permissionRetryCount >= self.maxPermissionRetries {
+                timer.invalidate()
+                self.permissionRetryTimer = nil
+                return
+            }
+            self.installEventTapIfAllowed()
         }
     }
 
@@ -75,6 +89,7 @@ final class HotkeyManager {
         hasLoggedMissingPermission = false
         installEventTap()
         if eventTap != nil {
+            removeFallbackMonitors()
             permissionRetryTimer?.invalidate()
             permissionRetryTimer = nil
             startHealthCheck()
@@ -140,6 +155,17 @@ final class HotkeyManager {
                 self?.handleFallbackHotkey(event)
                 return event
             }
+        }
+    }
+
+    private func removeFallbackMonitors() {
+        if let fallbackGlobalMonitor {
+            NSEvent.removeMonitor(fallbackGlobalMonitor)
+            self.fallbackGlobalMonitor = nil
+        }
+        if let fallbackLocalMonitor {
+            NSEvent.removeMonitor(fallbackLocalMonitor)
+            self.fallbackLocalMonitor = nil
         }
     }
 
@@ -248,10 +274,23 @@ final class HotkeyManager {
             return
         }
 
+        let keyCode = Int(event.keyCode)
+        let hasCommand = event.modifierFlags.contains(.command)
+        let hasShift = event.modifierFlags.contains(.shift)
+
+        if isCarbonHandledHotkey(keyCode: keyCode, hasCommand: hasCommand, hasShift: hasShift) {
+            return
+        }
+
+        if isHUDHotkey(keyCode: keyCode, hasCommand: hasCommand, hasShift: hasShift) {
+            postShowAllInOneHUD()
+            return
+        }
+
         let action = actionForHotkey(
-            keyCode: Int(event.keyCode),
-            hasCommand: event.modifierFlags.contains(.command),
-            hasShift: event.modifierFlags.contains(.shift)
+            keyCode: keyCode,
+            hasCommand: hasCommand,
+            hasShift: hasShift
         )
         guard let action else { return }
         postAction(action)
@@ -272,9 +311,33 @@ final class HotkeyManager {
         }
     }
 
+    private func isCarbonHandledHotkey(keyCode: Int, hasCommand: Bool, hasShift: Bool) -> Bool {
+        guard !carbonHotKeyRefs.isEmpty else { return false }
+        return hasCommand && hasShift && (keyCode == kVK_ANSI_3 || keyCode == kVK_ANSI_4)
+    }
+
+    private func isHUDHotkey(keyCode: Int, hasCommand: Bool, hasShift: Bool) -> Bool {
+        hasCommand && hasShift && keyCode == kVK_ANSI_5
+    }
+
+    private func postShowAllInOneHUD() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .showAllInOneHUD, object: nil)
+        }
+    }
+
     fileprivate func handleKeyEvent(_ event: CGEvent) -> CGEvent? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+
+        if isHUDHotkey(
+            keyCode: Int(keyCode),
+            hasCommand: flags.contains(.maskCommand),
+            hasShift: flags.contains(.maskShift)
+        ) {
+            postShowAllInOneHUD()
+            return nil
+        }
 
         let action = actionForHotkey(
             keyCode: Int(keyCode),

@@ -9,14 +9,32 @@ final class ScreenCaptureService {
         fileprivate let configuration: SCStreamConfiguration
     }
 
-    func captureDisplay(_ display: SCDisplay? = nil) async throws -> CGImage {
-        try ensureScreenCapturePermission()
+    private var cachedContent: SCShareableContent?
+    private var cachedContentTimestamp: Date = .distantPast
+    private let contentCacheDuration: TimeInterval = 2.0
+
+    private func getCachedContent() async throws -> SCShareableContent {
+        let now = Date()
+        if let cached = cachedContent, now.timeIntervalSince(cachedContentTimestamp) < contentCacheDuration {
+            return cached
+        }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        let targetDisplay = display ?? content.displays.first!
+        cachedContent = content
+        cachedContentTimestamp = now
+        return content
+    }
+
+    func captureDisplay(_ display: SCDisplay? = nil, retinaScale: Bool = true) async throws -> CGImage {
+        try ensureScreenCapturePermission()
+        let content = try await getCachedContent()
+        let targetDisplay = display ?? preferredDisplay(in: content)
+        guard let targetDisplay else {
+            throw CaptureError.noDisplay
+        }
 
         let filter = SCContentFilter(display: targetDisplay, excludingWindows: [])
         let config = SCStreamConfiguration()
-        let scale = displayScaleFactor(for: targetDisplay)
+        let scale = retinaScale ? displayScaleFactor(for: targetDisplay) : 1.0
         config.width = max(1, Int(CGFloat(targetDisplay.width) * scale))
         config.height = max(1, Int(CGFloat(targetDisplay.height) * scale))
         config.showsCursor = false
@@ -29,17 +47,18 @@ final class ScreenCaptureService {
         return image
     }
 
-    func captureWindow(_ window: SCWindow) async throws -> CGImage {
+    func captureWindow(_ window: SCWindow, retinaScale: Bool = true, includeShadow: Bool = true) async throws -> CGImage {
         try ensureScreenCapturePermission()
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let content = try await getCachedContent()
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
-        let scale = displayScale(for: window.frame, in: content)
+        let scale = retinaScale ? displayScale(for: window.frame, in: content) : 1.0
         config.width = max(1, Int(window.frame.width * scale))
         config.height = max(1, Int(window.frame.height * scale))
         config.showsCursor = false
         config.captureResolution = .best
         config.shouldBeOpaque = false
+        config.ignoreShadowsSingleWindow = !includeShadow
 
         let image = try await SCScreenshotManager.captureImage(
             contentFilter: filter,
@@ -48,23 +67,24 @@ final class ScreenCaptureService {
         return image
     }
 
-    func captureRect(_ rect: CGRect) async throws -> CGImage {
+    func captureRect(_ rect: CGRect, retinaScale: Bool = true) async throws -> CGImage {
         try ensureScreenCapturePermission()
-        let context = try await prepareRectCapture(for: rect)
+        let context = try await prepareRectCapture(for: rect, retinaScale: retinaScale)
         return try await captureRect(rect, using: context)
     }
 
     func prepareRectCapture(
         for rect: CGRect,
         content: SCShareableContent? = nil,
-        excludingWindowIDs: [CGWindowID] = []
+        excludingWindowIDs: [CGWindowID] = [],
+        retinaScale: Bool = true
     ) async throws -> RectCaptureContext {
         try ensureScreenCapturePermission()
         let resolvedContent: SCShareableContent
         if let content {
             resolvedContent = content
         } else {
-            resolvedContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            resolvedContent = try await getCachedContent()
         }
         guard let display = resolveDisplay(for: rect, in: resolvedContent) else {
             throw CaptureError.noDisplay
@@ -77,7 +97,7 @@ final class ScreenCaptureService {
             height: CGFloat(display.frame.height)
         )
 
-        let scale = displayScaleFactor(for: display)
+        let scale = retinaScale ? displayScaleFactor(for: display) : 1.0
         let excludedWindows: [SCWindow]
         if excludingWindowIDs.isEmpty {
             excludedWindows = []
@@ -128,7 +148,7 @@ final class ScreenCaptureService {
 
     func getShareableContent() async throws -> SCShareableContent {
         try ensureScreenCapturePermission()
-        return try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        return try await getCachedContent()
     }
 
     private func ensureScreenCapturePermission() throws {
@@ -173,6 +193,16 @@ final class ScreenCaptureService {
             }
         }
         return 2.0
+    }
+
+    private func preferredDisplay(in content: SCShareableContent) -> SCDisplay? {
+        guard !content.displays.isEmpty else { return nil }
+        if let mainScreen = NSScreen.main,
+           let mainDisplayID = mainScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+           let matchingDisplay = content.displays.first(where: { $0.displayID == mainDisplayID }) {
+            return matchingDisplay
+        }
+        return content.displays.first
     }
 
 }

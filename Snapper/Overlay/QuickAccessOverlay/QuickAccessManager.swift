@@ -14,6 +14,7 @@ final class QuickAccessManager {
     private let thumbnailVerticalInset: CGFloat = 4
     private let panelMaxHeight: CGFloat = 560
     private let panelMinHeight: CGFloat = 120
+    private let maxCaptures = 20
 
     init(appState: AppState) {
         self.appState = appState
@@ -60,20 +61,24 @@ final class QuickAccessManager {
     }
 
     func addCapture(_ info: CaptureCompletedInfo) {
-        let thumbnail = ImageUtils.generateThumbnail(info.result.image)
+        let thumbnail = info.thumbnail ?? info.result.image
         let capture = QuickAccessCapture(
             id: UUID(),
-            image: info.result.image,
-            thumbnail: thumbnail ?? info.result.image,
+            recordID: info.recordID,
+            inMemoryImage: info.savedURL == nil ? info.result.image : nil,
+            thumbnail: thumbnail,
             mode: info.result.mode,
             timestamp: info.result.timestamp,
             savedURL: info.savedURL,
             width: info.result.width,
             height: info.result.height,
-            fileSize: info.savedURL.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int } ?? 0
+            fileSize: info.fileSize
         )
         withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.86, blendDuration: 0.12)) {
             captures.insert(capture, at: 0)
+            if captures.count > maxCaptures {
+                captures.removeLast(captures.count - maxCaptures)
+            }
         }
         showPanel()
     }
@@ -118,6 +123,7 @@ final class QuickAccessManager {
 
     private func hidePanel() {
         panel?.orderOut(nil)
+        panel = nil
     }
 
     private func updatePanelLayout(animated: Bool) {
@@ -186,7 +192,8 @@ final class QuickAccessManager {
 
 struct QuickAccessCapture: Identifiable {
     let id: UUID
-    let image: CGImage
+    let recordID: UUID
+    let inMemoryImage: CGImage?
     let thumbnail: CGImage
     let mode: CaptureMode
     let timestamp: Date
@@ -198,4 +205,26 @@ struct QuickAccessCapture: Identifiable {
     var formattedFileSize: String {
         ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
     }
+
+    func resolvedImage() -> CGImage? {
+        if let inMemoryImage {
+            return inMemoryImage
+        }
+
+        guard let savedURL else { return nil }
+        let cacheKey = savedURL.path as NSString
+        if let cachedImage = Self.loadedImageCache.object(forKey: cacheKey),
+           let cachedCG = cachedImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            return cachedCG
+        }
+
+        guard let nsImage = NSImage(contentsOf: savedURL),
+              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return nil
+        }
+        Self.loadedImageCache.setObject(nsImage, forKey: cacheKey)
+        return cgImage
+    }
+
+    private static let loadedImageCache = NSCache<NSString, NSImage>()
 }

@@ -2,7 +2,21 @@ import AppKit
 import CoreImage
 
 final class PixelateAnnotation: Annotation {
+    private final class CachedImageBox {
+        let image: CGImage
+
+        init(_ image: CGImage) {
+            self.image = image
+        }
+    }
+
     private static let ciContext = CIContext(options: [.cacheIntermediates: true])
+    private static let processedImageCache: NSCache<NSString, CachedImageBox> = {
+        let cache = NSCache<NSString, CachedImageBox>()
+        cache.countLimit = 6
+        cache.totalCostLimit = 256 * 1024 * 1024
+        return cache
+    }()
 
     let id: UUID
     let type: ToolType = .pixelate
@@ -12,7 +26,7 @@ final class PixelateAnnotation: Annotation {
     let rect: CGRect
     let blockSize: CGFloat
     let sourceImage: CGImage
-    private var cachedRegionImage: CGImage?
+    private var cachedProcessedImage: CGImage?
 
     var boundingRect: CGRect { rect }
 
@@ -30,12 +44,17 @@ final class PixelateAnnotation: Annotation {
         let normalizedRect = rect.standardized.integral
         guard normalizedRect.width > 1, normalizedRect.height > 1 else { return }
 
-        if cachedRegionImage == nil {
-            cachedRegionImage = makePixelatedRegion(rect: normalizedRect)
+        if cachedProcessedImage == nil {
+            let imageBounds = CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
+            let cropRect = normalizedRect.intersection(imageBounds)
+            guard cropRect.width > 1, cropRect.height > 1,
+                  let croppedSource = sourceImage.cropping(to: cropRect) else { return }
+            cachedProcessedImage = Self.processedCroppedImage(for: croppedSource, blockSize: blockSize, cropRect: cropRect)
         }
-        guard let pixelatedRegion = cachedRegionImage else { return }
+        guard let processedImage = cachedProcessedImage else { return }
 
-        context.draw(pixelatedRegion, in: normalizedRect)
+        context.clip(to: normalizedRect)
+        context.draw(processedImage, in: normalizedRect)
     }
 
     func duplicate() -> any Annotation {
@@ -50,40 +69,36 @@ final class PixelateAnnotation: Annotation {
         return copy
     }
 
-    private func makePixelatedRegion(rect: CGRect) -> CGImage? {
-        let width = max(1, Int(rect.width.rounded()))
-        let height = max(1, Int(rect.height.rounded()))
+    private static func processedCroppedImage(for croppedSource: CGImage, blockSize: CGFloat, cropRect: CGRect) -> CGImage? {
+        let key = cacheKey(for: croppedSource, blockSize: blockSize, cropRect: cropRect)
+        if let cached = processedImageCache.object(forKey: key) {
+            return cached.image
+        }
 
-        guard let regionContext = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: sourceImage.bitsPerComponent,
-            bytesPerRow: 0,
-            space: sourceImage.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        regionContext.translateBy(x: -rect.minX, y: -rect.minY)
-        regionContext.draw(
-            sourceImage,
-            in: CGRect(
-                x: 0,
-                y: 0,
-                width: sourceImage.width,
-                height: sourceImage.height
-            )
-        )
-
-        guard let regionImage = regionContext.makeImage() else { return nil }
-
-        let ciInput = CIImage(cgImage: regionImage)
+        let ciInput = CIImage(cgImage: croppedSource)
         guard let filter = CIFilter(name: "CIPixellate") else { return nil }
         filter.setValue(ciInput, forKey: kCIInputImageKey)
         filter.setValue(max(1, blockSize), forKey: kCIInputScaleKey)
         filter.setValue(CIVector(x: ciInput.extent.midX, y: ciInput.extent.midY), forKey: kCIInputCenterKey)
 
         guard let output = filter.outputImage?.cropped(to: ciInput.extent) else { return nil }
-        return Self.ciContext.createCGImage(output, from: ciInput.extent)
+        guard let processedImage = Self.ciContext.createCGImage(output, from: ciInput.extent) else {
+            return nil
+        }
+
+        let estimatedCost = max(1, croppedSource.width * croppedSource.height * 4)
+        processedImageCache.setObject(CachedImageBox(processedImage), forKey: key, cost: estimatedCost)
+        return processedImage
+    }
+
+    static func clearCache() {
+        processedImageCache.removeAllObjects()
+    }
+
+    private static func cacheKey(for sourceImage: CGImage, blockSize: CGFloat, cropRect: CGRect) -> NSString {
+        let pointer = UInt(bitPattern: Unmanaged.passUnretained(sourceImage).toOpaque())
+        let normalizedBlockSize = Int((max(1, blockSize) * 10).rounded())
+        let r = cropRect
+        return "\(pointer):\(sourceImage.width)x\(sourceImage.height):\(normalizedBlockSize):\(Int(r.minX)),\(Int(r.minY)),\(Int(r.width)),\(Int(r.height))" as NSString
     }
 }

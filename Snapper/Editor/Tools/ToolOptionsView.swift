@@ -7,16 +7,39 @@ struct ToolOptionsView: View {
     @State private var hoveredTool: ToolType?
     private let textSizeRange: ClosedRange<CGFloat> = 8...240
 
+    private enum AnnotationSelectionMode {
+        case none
+        case single(annotation: any Annotation)
+        case multipleSameType(primary: any Annotation, count: Int)
+        case multipleMixed(count: Int)
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             switch primaryGroup {
             case .mouse:
-                if let selectedAnnotation {
-                    selectedAnnotationEditor(selectedAnnotation)
-                } else {
+                switch selectionMode {
+                case .none:
                     Label(
                         "Mouse mode: select, move, resize, and double-click text to edit.",
                         systemImage: "cursorarrow"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                case .single(let annotation):
+                    selectedAnnotationEditor(annotation)
+
+                case .multipleSameType(let primary, let count):
+                    Label("\(count) \(annotationTypeLabel(for: primary)) selected", systemImage: "square.on.square")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    selectedAnnotationEditor(primary)
+
+                case .multipleMixed(let count):
+                    Label(
+                        "\(count) items selected. Move works for all; property editing works when all selected items share one type.",
+                        systemImage: "square.on.square"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -141,7 +164,64 @@ struct ToolOptionsView: View {
     }
 
     private var selectedAnnotation: (any Annotation)? {
-        canvasState.selectedAnnotation()
+        guard let selectedAnnotationID = canvasState.selectedAnnotationID else {
+            return selectedAnnotations.first
+        }
+        return canvasState.annotations.first(where: { $0.id == selectedAnnotationID })
+            ?? selectedAnnotations.first
+    }
+
+    private var selectedAnnotations: [any Annotation] {
+        canvasState.selectedAnnotations()
+    }
+
+    private var editableSelectedAnnotations: [any Annotation] {
+        guard let selectedAnnotation else { return [] }
+        let annotations = selectedAnnotations
+        guard !annotations.isEmpty else { return [] }
+
+        let selectedType = ObjectIdentifier(type(of: selectedAnnotation))
+        guard annotations.allSatisfy({ ObjectIdentifier(type(of: $0)) == selectedType }) else {
+            return []
+        }
+
+        return [selectedAnnotation] + annotations.filter { $0.id != selectedAnnotation.id }
+    }
+
+    private var selectionMode: AnnotationSelectionMode {
+        let annotations = selectedAnnotations
+        guard let selectedAnnotation else { return .none }
+
+        if annotations.count <= 1 {
+            return .single(annotation: selectedAnnotation)
+        }
+
+        let selectedType = ObjectIdentifier(type(of: selectedAnnotation))
+        let isSameTypeSelection = annotations.allSatisfy {
+            ObjectIdentifier(type(of: $0)) == selectedType
+        }
+
+        if isSameTypeSelection {
+            return .multipleSameType(primary: selectedAnnotation, count: annotations.count)
+        }
+
+        return .multipleMixed(count: annotations.count)
+    }
+
+    private func annotationTypeLabel(for annotation: any Annotation) -> String {
+        if annotation is TextAnnotation { return "text item(s)" }
+        if annotation is ArrowAnnotation { return "arrow(s)" }
+        if annotation is RectangleAnnotation { return "rectangle(s)" }
+        if annotation is EllipseAnnotation { return "ellipse(s)" }
+        if annotation is LineAnnotation { return "line(s)" }
+        if annotation is PencilAnnotation { return "pencil stroke(s)" }
+        if annotation is HighlighterAnnotation { return "highlight(s)" }
+        if annotation is CounterAnnotation { return "counter(s)" }
+        if annotation is BlurAnnotation { return "blur area(s)" }
+        if annotation is PixelateAnnotation { return "pixelate area(s)" }
+        if annotation is SpotlightAnnotation { return "spotlight area(s)" }
+        if annotation is CropAnnotation { return "crop area(s)" }
+        return "item(s)"
     }
 
     @ViewBuilder
@@ -781,26 +861,46 @@ struct ToolOptionsView: View {
     ) -> Binding<Value> {
         Binding(
             get: {
-                guard let selectedAnnotation else { return fallback() }
+                guard let selectedAnnotation = editableSelectedAnnotations.first else {
+                    return fallback()
+                }
                 return get(selectedAnnotation) ?? fallback()
             },
             set: { newValue in
                 onSet?(newValue)
-                applyToSelectedAnnotation { annotation in
+                applyToEditableSelectedAnnotations { annotation in
                     set(annotation, newValue)
                 }
             }
         )
     }
 
-    private func applyToSelectedAnnotation(
+    private func applyToEditableSelectedAnnotations(
         _ transform: ((any Annotation) -> (any Annotation)?)
     ) {
-        guard let selectedAnnotation else { return }
-        guard let updated = transform(selectedAnnotation) else { return }
-        updated.zOrder = selectedAnnotation.zOrder
-        updated.isVisible = selectedAnnotation.isVisible
-        canvasState.replaceAnnotation(updated, recordUndo: true)
+        let annotations = editableSelectedAnnotations
+        guard !annotations.isEmpty else { return }
+
+        let primaryID = canvasState.selectedAnnotationID
+        var didApplyUpdate = false
+
+        for source in annotations {
+            guard let updated = transform(source) else { continue }
+            updated.zOrder = source.zOrder
+            updated.isVisible = source.isVisible
+            canvasState.replaceAnnotation(updated, recordUndo: true)
+            didApplyUpdate = true
+        }
+
+        guard didApplyUpdate else { return }
+
+        let selectionIDs = Set(annotations.map { $0.id })
+        canvasState.selectedAnnotationIDs = selectionIDs
+        if let primaryID, selectionIDs.contains(primaryID) {
+            canvasState.selectedAnnotationID = primaryID
+        } else {
+            canvasState.selectedAnnotationID = annotations.first?.id
+        }
     }
 
     private func makeTextAnnotation(

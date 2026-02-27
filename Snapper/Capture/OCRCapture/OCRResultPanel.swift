@@ -5,6 +5,9 @@ final class OCRResultPanel {
     private static var panel: NSPanel?
 
     static func show(text: String) {
+        panel?.close()
+        panel = nil
+
         let view = OCRResultView(text: text)
         let hostingView = NSHostingView(rootView: view)
 

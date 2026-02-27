@@ -89,6 +89,7 @@ enum AnnotationGeometry {
             || annotation is EllipseAnnotation
             || annotation is TextAnnotation
             || annotation is PencilAnnotation
+            || annotation is LineAnnotation
     }
 
     static func rotationDegrees(for annotation: any Annotation) -> CGFloat {
@@ -368,6 +369,19 @@ enum AnnotationGeometry {
                 points: rotatedPoints,
                 color: pencil.color,
                 strokeWidth: pencil.strokeWidth
+            )
+        }
+        if let line = annotation as? LineAnnotation {
+            let frame = normalizedLineFrame(start: line.start, end: line.end)
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            let rotationRadians = rotationDegrees * (.pi / 180)
+            return LineAnnotation(
+                id: line.id,
+                start: rotate(line.start, around: center, by: rotationRadians),
+                end: rotate(line.end, around: center, by: rotationRadians),
+                color: line.color,
+                strokeWidth: line.strokeWidth,
+                isDashed: line.isDashed
             )
         }
 

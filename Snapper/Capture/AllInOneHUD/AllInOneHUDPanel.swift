@@ -3,14 +3,21 @@ import SwiftUI
 
 final class AllInOneHUDPanel {
     private var panel: NSPanel?
+    private var observerToken: NSObjectProtocol?
 
     init() {
-        NotificationCenter.default.addObserver(
+        observerToken = NotificationCenter.default.addObserver(
             forName: .showAllInOneHUD,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.show()
+        }
+    }
+
+    deinit {
+        if let observerToken {
+            NotificationCenter.default.removeObserver(observerToken)
         }
     }
 

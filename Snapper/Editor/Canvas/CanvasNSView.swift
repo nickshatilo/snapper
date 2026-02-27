@@ -15,6 +15,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     private var textRecognitionTask: Task<Void, Never>?
     private var nextTextRecognitionRetryDate: Date = .distantPast
     private var recognizedTextBlocks: [OCRTextBlock] = []
+    private var recognizedTextRectsByID: [UUID: CGRect] = [:]
     private var selectedTextBlockIDs: Set<UUID> = []
     private var selectedAnnotationIDs: Set<UUID> = []
     private var textSelectionStartPoint: CGPoint?
@@ -74,6 +75,21 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             }
         }
     }
+
+    private enum HighlightStyle {
+        case selected
+        case preview
+
+        var fallbackAlpha: CGFloat {
+            switch self {
+            case .selected: return 0.28
+            case .preview: return 0.17
+            }
+        }
+    }
+
+    private static let selectedHighlightGradient = makeHighlightGradient(topAlpha: 0.08, bottomAlpha: 0.28)
+    private static let previewHighlightGradient = makeHighlightGradient(topAlpha: 0.05, bottomAlpha: 0.17)
 
     init(canvasState: CanvasState, toolManager: ToolManager) {
         self.canvasState = canvasState
@@ -299,6 +315,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
                     setSelectedAnnotationIDs([hitAnnotation.id], primaryID: hitAnnotation.id)
                 } else {
                     canvasState.selectedAnnotationID = hitAnnotation.id
+                    canvasState.selectedAnnotationIDs = selectedAnnotationIDs
                 }
             }
 
@@ -618,6 +635,9 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         super.viewDidMoveToWindow()
         window?.acceptsMouseMovedEvents = true
         window?.makeFirstResponder(self)
+        resetViewportIfImageChanged()
+        configureInitialViewportIfNeeded()
+        syncCropModeState()
     }
 
     private func resetViewportIfImageChanged() {
@@ -884,6 +904,9 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
 
     private func synchronizeAnnotationSelectionState() {
         let validIDs = Set(canvasState.annotations.map(\.id))
+        if !canvasState.selectedAnnotationIDs.isEmpty {
+            selectedAnnotationIDs.formUnion(canvasState.selectedAnnotationIDs)
+        }
         selectedAnnotationIDs = Set(selectedAnnotationIDs.filter { validIDs.contains($0) })
 
         if let primaryID = canvasState.selectedAnnotationID {
@@ -903,6 +926,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         if selectedAnnotationIDs.isEmpty {
             canvasState.selectedAnnotationID = nil
         }
+        canvasState.selectedAnnotationIDs = selectedAnnotationIDs
     }
 
     private func setSelectedAnnotationIDs(_ ids: Set<UUID>, primaryID: UUID?) {
@@ -912,6 +936,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         } else {
             canvasState.selectedAnnotationID = ids.first
         }
+        canvasState.selectedAnnotationIDs = selectedAnnotationIDs
     }
 
     private func toggleSelection(for annotationID: UUID) {
@@ -928,6 +953,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         if selectedAnnotationIDs.isEmpty {
             canvasState.selectedAnnotationID = nil
         }
+        canvasState.selectedAnnotationIDs = selectedAnnotationIDs
     }
 
     private func beginAnnotationMarqueeSelection(at point: CGPoint, additive: Bool) {
@@ -1084,6 +1110,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         let updated = cloneTextAnnotation(existing, text: finalText)
         replaceAnnotation(updated)
         canvasState.selectedAnnotationID = updated.id
+        canvasState.selectedAnnotationIDs = [updated.id]
         canvasState.undoManager.recordModify(
             oldAnnotation: previous,
             newAnnotation: updated.duplicate(),
@@ -1099,14 +1126,20 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             return
         }
 
-        session.textField.frame = inlineEditorFrame(for: annotation)
+        session.textField.frame = inlineEditorFrame(for: annotation, liveText: session.textField.stringValue)
         session.textField.font = displayFont(for: annotation)
         session.textField.textColor = annotation.color
     }
 
-    private func inlineEditorFrame(for annotation: TextAnnotation) -> CGRect {
+    private func inlineEditorFrame(for annotation: TextAnnotation, liveText: String? = nil) -> CGRect {
         let zoom = max(canvasState.zoomLevel, 0.1)
-        let rect = annotation.boundingRect.standardized
+        let sizingAnnotation: TextAnnotation
+        if let liveText {
+            sizingAnnotation = cloneTextAnnotation(annotation, text: liveText)
+        } else {
+            sizingAnnotation = annotation
+        }
+        let rect = sizingAnnotation.boundingRect.standardized
         let minWidth = max(26, annotation.fontSize * zoom * 1.6)
         let minHeight = max(14, annotation.fontSize * zoom + 4)
         return CGRect(
@@ -1149,6 +1182,16 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             return
         }
         finishInlineTextEditing(commit: true)
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let session = inlineTextEditSession,
+              let field = obj.object as? NSTextField,
+              field === session.textField else {
+            return
+        }
+        updateInlineTextEditorFrameAndStyle()
+        needsDisplay = true
     }
 
     private func annotation(with id: UUID) -> (any Annotation)? {
@@ -1246,7 +1289,6 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     }
 
     private func drawAnnotationSelectionOverlay(in context: CGContext) {
-        synchronizeAnnotationSelectionState()
         let selectedIDs = selectedAnnotationIDs
         guard !selectedIDs.isEmpty else { return }
 
@@ -1563,6 +1605,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
                     if let selectedID = canvasState.selectedAnnotationID, cropIDs.contains(selectedID) {
                         canvasState.selectedAnnotationID = selectedAnnotationIDs.first
                     }
+                    canvasState.selectedAnnotationIDs = selectedAnnotationIDs
                 }
                 annotationEditSession = nil
             }
@@ -1674,6 +1717,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
 
                 await MainActor.run {
                     self.recognizedTextBlocks = blocks
+                    self.recognizedTextRectsByID = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0.imageRect) })
                     self.selectedTextBlockIDs.removeAll()
                     self.canvasState.recognizedTextRegionCount = blocks.count
                     self.hasCompletedTextRecognition = true
@@ -1687,6 +1731,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
 
                 await MainActor.run {
                     self.recognizedTextBlocks = []
+                    self.recognizedTextRectsByID = [:]
                     self.selectedTextBlockIDs.removeAll()
                     self.canvasState.recognizedTextRegionCount = 0
                     self.canvasState.isOCRProcessing = false
@@ -1710,6 +1755,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         hasCompletedTextRecognition = false
         nextTextRecognitionRetryDate = .distantPast
         recognizedTextBlocks = []
+        recognizedTextRectsByID = [:]
         selectedTextBlockIDs.removeAll()
         clearTextSelection()
         annotationEditSession = nil
@@ -1747,6 +1793,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             if selectedAnnotationIDs.isEmpty {
                 canvasState.selectedAnnotationID = nil
             }
+            canvasState.selectedAnnotationIDs = selectedAnnotationIDs
             annotationEditSession = nil
             discarded = true
         }
@@ -1930,8 +1977,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
                 rect,
                 in: context,
                 zoom: zoom,
-                topAlpha: 0.08,
-                bottomAlpha: 0.28
+                style: .selected
             )
         }
 
@@ -1942,8 +1988,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
                 rect,
                 in: context,
                 zoom: zoom,
-                topAlpha: 0.05,
-                bottomAlpha: 0.17
+                style: .preview
             )
         }
 
@@ -1967,8 +2012,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         _ rect: CGRect,
         in context: CGContext,
         zoom: CGFloat,
-        topAlpha: CGFloat,
-        bottomAlpha: CGFloat
+        style: HighlightStyle
     ) {
         let expanded = rect.insetBy(dx: -1 / zoom, dy: -0.5 / zoom)
         let path = CGPath(
@@ -1979,16 +2023,17 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         )
 
         let color = NSColor.systemBlue
-        guard let gradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [
-                color.withAlphaComponent(topAlpha).cgColor,
-                color.withAlphaComponent(bottomAlpha).cgColor,
-            ] as CFArray,
-            locations: [0, 1]
-        ) else {
+        let gradient: CGGradient?
+        switch style {
+        case .selected:
+            gradient = Self.selectedHighlightGradient
+        case .preview:
+            gradient = Self.previewHighlightGradient
+        }
+
+        guard let gradient else {
             context.addPath(path)
-            context.setFillColor(color.withAlphaComponent(bottomAlpha).cgColor)
+            context.setFillColor(color.withAlphaComponent(style.fallbackAlpha).cgColor)
             context.fillPath()
             return
         }
@@ -2005,12 +2050,23 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         context.restoreGState()
     }
 
+    private static func makeHighlightGradient(topAlpha: CGFloat, bottomAlpha: CGFloat) -> CGGradient? {
+        let color = NSColor.systemBlue
+        return CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                color.withAlphaComponent(topAlpha).cgColor,
+                color.withAlphaComponent(bottomAlpha).cgColor,
+            ] as CFArray,
+            locations: [0, 1]
+        )
+    }
+
     private func mergedHighlightRects(for blockIDs: Set<UUID>) -> [CGRect] {
         guard !blockIDs.isEmpty else { return [] }
 
-        let rects = recognizedTextBlocks
-            .filter { blockIDs.contains($0.id) }
-            .map(\.imageRect)
+        let rects = blockIDs
+            .compactMap { recognizedTextRectsByID[$0] }
             .sorted {
                 let yDelta = $0.midY - $1.midY
                 if abs(yDelta) > 2 { return yDelta > 0 }

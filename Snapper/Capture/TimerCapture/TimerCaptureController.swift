@@ -18,9 +18,10 @@ struct TimerCaptureRequest {
 final class TimerCaptureController {
     private var countdownWindow: NSWindow?
     private var timer: Timer?
+    private var observerToken: NSObjectProtocol?
 
     init() {
-        NotificationCenter.default.addObserver(
+        observerToken = NotificationCenter.default.addObserver(
             forName: .startTimerCapture,
             object: nil,
             queue: .main
@@ -30,8 +31,21 @@ final class TimerCaptureController {
         }
     }
 
+    deinit {
+        timer?.invalidate()
+        countdownWindow?.close()
+        countdownWindow = nil
+        if let observerToken {
+            NotificationCenter.default.removeObserver(observerToken)
+        }
+    }
+
     func start(seconds: Int, mode: CaptureMode) {
+        let hadExistingCountdown = timer != nil
         cancelExistingCountdown()
+        if hadExistingCountdown {
+            NotificationCenter.default.post(name: .timerCaptureDidFinish, object: nil)
+        }
         showCountdown(seconds: seconds) {
             NotificationCenter.default.post(name: .startCapture, object: mode)
         }
@@ -40,7 +54,7 @@ final class TimerCaptureController {
     private func cancelExistingCountdown() {
         timer?.invalidate()
         timer = nil
-        countdownWindow?.orderOut(nil)
+        countdownWindow?.close()
         countdownWindow = nil
     }
 
@@ -72,7 +86,7 @@ final class TimerCaptureController {
             if remaining <= 0 {
                 timer.invalidate()
                 self?.timer = nil
-                self?.countdownWindow?.orderOut(nil)
+                self?.countdownWindow?.close()
                 self?.countdownWindow = nil
                 completion()
             } else {

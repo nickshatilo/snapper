@@ -3,14 +3,21 @@ import Foundation
 
 final class UpdateManager {
     private let releasesURL = URL(string: "https://github.com/nickshatilo/snapper/releases")
+    private var observerToken: NSObjectProtocol?
 
     init() {
-        NotificationCenter.default.addObserver(
+        observerToken = NotificationCenter.default.addObserver(
             forName: .checkForUpdates,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.checkForUpdates()
+        }
+    }
+
+    deinit {
+        if let observerToken {
+            NotificationCenter.default.removeObserver(observerToken)
         }
     }
 

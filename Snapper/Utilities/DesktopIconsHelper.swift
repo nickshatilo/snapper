@@ -2,11 +2,13 @@ import Foundation
 
 enum DesktopIconsHelper {
     private static let finderBundleID = "com.apple.finder"
-    private static let plistPath = NSHomeDirectory() + "/Library/Preferences/com.apple.finder.plist"
+    private static let workerQueue = DispatchQueue(label: "com.snapper.desktopicons", qos: .utility)
 
     static var areIconsVisible: Bool {
-        let defaults = UserDefaults(suiteName: finderBundleID)
-        return defaults?.bool(forKey: "CreateDesktop") ?? true
+        guard let defaults = UserDefaults(suiteName: finderBundleID) else {
+            return true
+        }
+        return defaults.object(forKey: "CreateDesktop") as? Bool ?? true
     }
 
     static func toggle() {
@@ -14,22 +16,37 @@ enum DesktopIconsHelper {
         setDesktopIcons(visible: !current)
     }
 
-    static func setDesktopIcons(visible: Bool) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        process.arguments = ["write", finderBundleID, "CreateDesktop", "-bool", visible ? "true" : "false"]
+    static func setDesktopIcons(visible: Bool, completion: ((Bool) -> Void)? = nil) {
+        workerQueue.async {
+            if areIconsVisible == visible {
+                DispatchQueue.main.async {
+                    completion?(true)
+                }
+                return
+            }
 
-        try? process.run()
-        process.waitUntilExit()
+            let defaults = UserDefaults(suiteName: finderBundleID)
+            defaults?.set(visible, forKey: "CreateDesktop")
+            CFPreferencesAppSynchronize(finderBundleID as CFString)
+            let didRestartFinder = restartFinder()
 
-        restartFinder()
+            DispatchQueue.main.async {
+                completion?(didRestartFinder)
+            }
+        }
     }
 
-    private static func restartFinder() {
+    @discardableResult
+    private static func restartFinder() -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         process.arguments = ["Finder"]
-        try? process.run()
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
         process.waitUntilExit()
+        return process.terminationStatus == 0
     }
 }

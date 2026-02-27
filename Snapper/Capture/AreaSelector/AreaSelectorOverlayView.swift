@@ -3,14 +3,18 @@ import AppKit
 final class AreaSelectorOverlayView: NSView {
     var onSelectionComplete: ((CGRect) -> Void)?
     var onCancel: (() -> Void)?
+    var frozenImage: CGImage?
+    var showsMagnifier = false
 
     private var selectionStart: NSPoint?
     private var selectionRect: NSRect?
     private var isDragging = false
+    private var magnifierView: MagnifierView?
 
     private let overlayColor = NSColor.black.withAlphaComponent(0.3)
     private let selectionBorderColor = NSColor.white
     private let dimensionFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+    private let magnifierInset: CGFloat = 16
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -33,6 +37,10 @@ final class AreaSelectorOverlayView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+        if let frozenImage {
+            context.draw(frozenImage, in: bounds)
+        }
 
         // Dark overlay
         context.setFillColor(overlayColor.cgColor)
@@ -83,6 +91,7 @@ final class AreaSelectorOverlayView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        updateMagnifier(at: point)
         selectionStart = point
         selectionRect = nil
         isDragging = true
@@ -92,6 +101,7 @@ final class AreaSelectorOverlayView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard let start = selectionStart else { return }
         let current = convert(event.locationInWindow, from: nil)
+        updateMagnifier(at: current)
         selectionRect = NSRect(
             x: min(start.x, current.x),
             y: min(start.y, current.y),
@@ -108,6 +118,17 @@ final class AreaSelectorOverlayView: NSView {
         } else {
             discardSelection()
         }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        updateMagnifier(at: point)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        magnifierView?.isHidden = true
     }
 
     @discardableResult
@@ -136,5 +157,48 @@ final class AreaSelectorOverlayView: NSView {
         if !discardSelection() {
             onCancel?()
         }
+    }
+
+    private func updateMagnifier(at point: NSPoint) {
+        guard showsMagnifier, let window else {
+            magnifierView?.isHidden = true
+            return
+        }
+
+        let magnifier = ensureMagnifierView()
+        let screenPoint = NSPoint(
+            x: window.frame.origin.x + point.x,
+            y: window.frame.origin.y + point.y
+        )
+        if let screen = window.screen {
+            magnifier.update(at: screenPoint, on: screen)
+        }
+        magnifier.isHidden = false
+
+        var frame = magnifier.frame
+        frame.origin = NSPoint(
+            x: point.x + magnifierInset,
+            y: point.y + magnifierInset
+        )
+        if frame.maxX > bounds.maxX {
+            frame.origin.x = point.x - magnifierInset - frame.width
+        }
+        if frame.maxY > bounds.maxY {
+            frame.origin.y = point.y - magnifierInset - frame.height
+        }
+        frame.origin.x = max(bounds.minX, min(frame.origin.x, bounds.maxX - frame.width))
+        frame.origin.y = max(bounds.minY, min(frame.origin.y, bounds.maxY - frame.height))
+        magnifier.frame = frame
+    }
+
+    private func ensureMagnifierView() -> MagnifierView {
+        if let magnifierView {
+            return magnifierView
+        }
+        let magnifier = MagnifierView(frame: .zero)
+        magnifier.isHidden = true
+        addSubview(magnifier)
+        magnifierView = magnifier
+        return magnifier
     }
 }
