@@ -18,6 +18,10 @@ dist/
 # SPM
 .swiftpm/
 
+# Website
+website/node_modules/
+website/.astro/
+
 # Misc
 *.swp
 *~
