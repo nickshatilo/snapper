@@ -1,0 +1,9 @@
+website/node_modules
+website/dist
+website/.astro
+.build
+.release-build
+DerivedData
+dist
+*.xcodeproj
+.git
