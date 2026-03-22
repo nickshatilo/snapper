@@ -20,7 +20,12 @@ dist/
 
 # Website
 website/node_modules/
+website/demo/node_modules/
 website/.astro/
+
+# Certificates & signing
+*.cer
+*.p12
 
 # Misc
 *.swp

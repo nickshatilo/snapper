@@ -2,6 +2,9 @@ import AppKit
 import ScreenCaptureKit
 
 enum PermissionChecker {
+    private static var lastScreenRecordingPromptAt: Date = .distantPast
+    private static let screenRecordingPromptCooldown: TimeInterval = 10
+
     static func isAccessibilityGranted() -> Bool {
         AXIsProcessTrusted()
     }
@@ -43,10 +46,16 @@ enum PermissionChecker {
 
     @MainActor
     static func promptForScreenRecordingInSettings() {
+        let now = Date()
+        guard now.timeIntervalSince(lastScreenRecordingPromptAt) >= screenRecordingPromptCooldown else {
+            return
+        }
+        lastScreenRecordingPromptAt = now
+
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Screen Recording Permission Required"
-        alert.informativeText = "Enable Screen Recording for Snapper in System Settings > Privacy & Security > Screen Recording, then relaunch Snapper."
+        alert.informativeText = "Enable Screen Recording for Snapper in System Settings > Privacy & Security > Screen Recording, then relaunch Snapper. If you recently reinstalled or changed signing, macOS may require granting it again."
         alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "Cancel")
         let response = alert.runModal()

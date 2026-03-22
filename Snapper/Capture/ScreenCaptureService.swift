@@ -2,6 +2,12 @@ import AppKit
 import ScreenCaptureKit
 
 final class ScreenCaptureService {
+    struct MultiDisplayCapture {
+        let image: CGImage
+        let sourceRect: CGRect
+        let scale: CGFloat
+    }
+
     struct RectCaptureContext {
         fileprivate let displayFrame: CGRect
         fileprivate let displayScale: CGFloat
@@ -47,6 +53,12 @@ final class ScreenCaptureService {
         return image
     }
 
+    func captureAllDisplays(retinaScale: Bool = true) async throws -> MultiDisplayCapture {
+        try ensureScreenCapturePermission()
+        let content = try await getCachedContent()
+        return try await captureAllDisplays(in: content, retinaScale: retinaScale)
+    }
+
     func captureWindow(_ window: SCWindow, retinaScale: Bool = true, includeShadow: Bool = true) async throws -> CGImage {
         try ensureScreenCapturePermission()
         let content = try await getCachedContent()
@@ -69,6 +81,16 @@ final class ScreenCaptureService {
 
     func captureRect(_ rect: CGRect, retinaScale: Bool = true) async throws -> CGImage {
         try ensureScreenCapturePermission()
+        let content = try await getCachedContent()
+        let intersectingDisplays = content.displays.filter {
+            displayRect($0).intersects(rect)
+        }
+
+        if intersectingDisplays.count > 1 {
+            let multiDisplay = try await captureAllDisplays(in: content, retinaScale: retinaScale)
+            return try crop(rect: rect, from: multiDisplay.image, sourceRect: multiDisplay.sourceRect, scale: multiDisplay.scale)
+        }
+
         let context = try await prepareRectCapture(for: rect, retinaScale: retinaScale)
         return try await captureRect(rect, using: context)
     }
@@ -128,22 +150,7 @@ final class ScreenCaptureService {
             configuration: context.configuration
         )
 
-        // Convert from global point-space to display-local pixel-space.
-        let localRect = CGRect(
-            x: (rect.minX - context.displayFrame.minX) * context.displayScale,
-            y: (context.displayFrame.maxY - rect.maxY) * context.displayScale,
-            width: rect.width * context.displayScale,
-            height: rect.height * context.displayScale
-        ).integral
-
-        let imageBounds = CGRect(x: 0, y: 0, width: fullImage.width, height: fullImage.height)
-        let cropRect = localRect.intersection(imageBounds)
-        guard cropRect.width > 0, cropRect.height > 0,
-              let croppedImage = fullImage.cropping(to: cropRect) else {
-            throw CaptureError.cropFailed
-        }
-
-        return croppedImage
+        return try crop(rect: rect, from: fullImage, sourceRect: context.displayFrame, scale: context.displayScale)
     }
 
     func getShareableContent() async throws -> SCShareableContent {
@@ -176,6 +183,107 @@ final class ScreenCaptureService {
                 height: CGFloat($0.frame.height)
             ).intersects(rect)
         }) ?? content.displays.first
+    }
+
+    private func captureAllDisplays(
+        in content: SCShareableContent,
+        retinaScale: Bool
+    ) async throws -> MultiDisplayCapture {
+        guard !content.displays.isEmpty else {
+            throw CaptureError.noDisplay
+        }
+
+        var capturedDisplays: [(frame: CGRect, scale: CGFloat, image: CGImage)] = []
+        capturedDisplays.reserveCapacity(content.displays.count)
+
+        for display in content.displays {
+            let frame = displayRect(display)
+            let scale = retinaScale ? displayScaleFactor(for: display) : 1.0
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let config = SCStreamConfiguration()
+            config.width = max(1, Int(frame.width * scale))
+            config.height = max(1, Int(frame.height * scale))
+            config.showsCursor = false
+            config.captureResolution = .best
+
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+            capturedDisplays.append((frame: frame, scale: scale, image: image))
+        }
+
+        let unionRect = capturedDisplays
+            .map(\.frame)
+            .reduce(CGRect.null) { partial, frame in
+                partial.union(frame)
+            }
+        let canvasScale = max(1.0, retinaScale ? capturedDisplays.map(\.scale).max() ?? 1.0 : 1.0)
+        let canvasWidth = max(1, Int((unionRect.width * canvasScale).rounded(.up)))
+        let canvasHeight = max(1, Int((unionRect.height * canvasScale).rounded(.up)))
+
+        guard let context = CGContext(
+            data: nil,
+            width: canvasWidth,
+            height: canvasHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw CaptureError.cropFailed
+        }
+
+        context.interpolationQuality = .high
+        context.translateBy(x: 0, y: CGFloat(canvasHeight))
+        context.scaleBy(x: 1, y: -1)
+
+        for captured in capturedDisplays {
+            let targetRect = CGRect(
+                x: (captured.frame.minX - unionRect.minX) * canvasScale,
+                y: (unionRect.maxY - captured.frame.maxY) * canvasScale,
+                width: captured.frame.width * canvasScale,
+                height: captured.frame.height * canvasScale
+            ).integral
+            context.draw(captured.image, in: targetRect)
+        }
+
+        guard let image = context.makeImage() else {
+            throw CaptureError.cropFailed
+        }
+
+        return MultiDisplayCapture(
+            image: image,
+            sourceRect: unionRect,
+            scale: canvasScale
+        )
+    }
+
+    private func crop(rect: CGRect, from image: CGImage, sourceRect: CGRect, scale: CGFloat) throws -> CGImage {
+        // Convert from global point-space to image pixel-space (top-left origin).
+        let localRect = CGRect(
+            x: (rect.minX - sourceRect.minX) * scale,
+            y: (sourceRect.maxY - rect.maxY) * scale,
+            width: rect.width * scale,
+            height: rect.height * scale
+        ).integral
+
+        let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let cropRect = localRect.intersection(imageBounds)
+        guard cropRect.width > 0, cropRect.height > 0,
+              let croppedImage = image.cropping(to: cropRect) else {
+            throw CaptureError.cropFailed
+        }
+        return croppedImage
+    }
+
+    private func displayRect(_ display: SCDisplay) -> CGRect {
+        CGRect(
+            x: CGFloat(display.frame.origin.x),
+            y: CGFloat(display.frame.origin.y),
+            width: CGFloat(display.frame.width),
+            height: CGFloat(display.frame.height)
+        )
     }
 
     private func displayScale(for rect: CGRect, in content: SCShareableContent) -> CGFloat {

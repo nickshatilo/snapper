@@ -7,8 +7,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.1.0"
-    CURRENT_PROJECT_VERSION: "2"
+    MARKETING_VERSION: "1.2.0"
+    CURRENT_PROJECT_VERSION: "3"
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
@@ -39,11 +39,11 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: 565U5492Q2
-        CODE_SIGN_IDENTITY: "Apple Development: shatilo.nick@gmail.com (MUN5VG7X6X)"
         ARCHS: "$(ARCHS_STANDARD)"
         ONLY_ACTIVE_ARCH: NO
         LD_RUNPATH_SEARCH_PATHS:
           - "@executable_path/../Frameworks"
+        CODE_SIGN_IDENTITY: "Developer ID Application"
     dependencies:
       - package: Sparkle
     entitlements:
@@ -63,7 +63,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: 565U5492Q2
-        CODE_SIGN_IDENTITY: "Apple Development: shatilo.nick@gmail.com (MUN5VG7X6X)"
+        CODE_SIGN_IDENTITY: "Developer ID Application"
     dependencies:
       - target: Snapper
 

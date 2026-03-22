@@ -71,12 +71,12 @@ final class CaptureCoordinator {
     private func captureFullscreen(options: CaptureOptions) {
         Task {
             do {
-                let image = try await captureService.captureDisplay(retinaScale: options.retina2x)
+                let capture = try await captureService.captureAllDisplays(retinaScale: options.retina2x)
                 let result = CaptureResult(
-                    image: image,
+                    image: capture.image,
                     mode: .fullscreen,
                     timestamp: Date(),
-                    sourceRect: NSScreen.main?.frame ?? .zero,
+                    sourceRect: capture.sourceRect,
                     windowName: nil,
                     applicationName: nil
                 )

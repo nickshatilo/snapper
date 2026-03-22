@@ -1,14 +1,11 @@
 import AppKit
 
 final class AreaSelectorOverlayView: NSView {
-    var onSelectionComplete: ((CGRect) -> Void)?
-    var onCancel: (() -> Void)?
     var frozenImage: CGImage?
     var showsMagnifier = false
 
-    private var selectionStart: NSPoint?
     private var selectionRect: NSRect?
-    private var isDragging = false
+    private var selectionPixelSize: CGSize?
     private var magnifierView: MagnifierView?
 
     private let overlayColor = NSColor.black.withAlphaComponent(0.3)
@@ -42,13 +39,22 @@ final class AreaSelectorOverlayView: NSView {
             context.draw(frozenImage, in: bounds)
         }
 
-        // Dark overlay
-        context.setFillColor(overlayColor.cgColor)
-        context.fill(bounds)
-
         if let rect = selectionRect {
+            // Only dim the screen once selection starts so users can see the target content clearly.
+            context.setFillColor(overlayColor.cgColor)
+            context.fill(bounds)
+
             // Clear the selection area
-            context.clear(rect)
+            if frozenImage != nil {
+                context.saveGState()
+                context.clip(to: rect)
+                if let frozenImage {
+                    context.draw(frozenImage, in: bounds)
+                }
+                context.restoreGState()
+            } else {
+                context.clear(rect)
+            }
 
             // Dashed border
             context.setStrokeColor(selectionBorderColor.cgColor)
@@ -64,8 +70,15 @@ final class AreaSelectorOverlayView: NSView {
 
     private func drawDimensionLabel(context: CGContext, rect: CGRect) {
         let scale = window?.backingScaleFactor ?? 2.0
-        let w = Int(rect.width * scale)
-        let h = Int(rect.height * scale)
+        let w: Int
+        let h: Int
+        if let selectionPixelSize {
+            w = Int(selectionPixelSize.width.rounded())
+            h = Int(selectionPixelSize.height.rounded())
+        } else {
+            w = Int(rect.width * scale)
+            h = Int(rect.height * scale)
+        }
         let text = "\(w) × \(h)"
 
         let attrs: [NSAttributedString.Key: Any] = [
@@ -87,89 +100,45 @@ final class AreaSelectorOverlayView: NSView {
         (text as NSString).draw(at: NSPoint(x: labelX, y: labelY), withAttributes: attrs)
     }
 
-    // MARK: - Mouse Events
-
-    override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        updateMagnifier(at: point)
-        selectionStart = point
-        selectionRect = nil
-        isDragging = true
-        needsDisplay = true
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = selectionStart else { return }
-        let current = convert(event.locationInWindow, from: nil)
-        updateMagnifier(at: current)
-        selectionRect = NSRect(
-            x: min(start.x, current.x),
-            y: min(start.y, current.y),
-            width: abs(current.x - start.x),
-            height: abs(current.y - start.y)
-        )
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        isDragging = false
-        if let rect = selectionRect, rect.width > 5 && rect.height > 5 {
-            onSelectionComplete?(rect)
-        } else {
-            discardSelection()
-        }
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
-        let point = convert(event.locationInWindow, from: nil)
-        updateMagnifier(at: point)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        magnifierView?.isHidden = true
-    }
-
     @discardableResult
-    func discardSelection() -> Bool {
-        let hadSelection = selectionStart != nil || selectionRect != nil || isDragging
-        selectionStart = nil
+    func clearSelection() -> Bool {
+        let hadSelection = selectionRect != nil
         selectionRect = nil
-        isDragging = false
+        selectionPixelSize = nil
         if hadSelection {
             needsDisplay = true
         }
         return hadSelection
     }
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // Escape
-            if !discardSelection() {
-                onCancel?()
-            }
+    func setSelectionRect(_ rect: CGRect?, pixelSize: CGSize?) {
+        let nextRect = rect
+        guard selectionRect != nextRect || selectionPixelSize != pixelSize else { return }
+        selectionRect = nextRect
+        selectionPixelSize = pixelSize
+        needsDisplay = true
+    }
+
+    func setMagnifierPointInScreen(_ point: NSPoint?) {
+        guard let point else {
+            magnifierView?.isHidden = true
             return
         }
-        super.keyDown(with: event)
+        updateMagnifier(atScreenPoint: point)
     }
 
-    override func cancelOperation(_ sender: Any?) {
-        if !discardSelection() {
-            onCancel?()
-        }
-    }
-
-    private func updateMagnifier(at point: NSPoint) {
+    private func updateMagnifier(atScreenPoint screenPoint: NSPoint) {
         guard showsMagnifier, let window else {
             magnifierView?.isHidden = true
             return
         }
 
         let magnifier = ensureMagnifierView()
-        let screenPoint = NSPoint(
-            x: window.frame.origin.x + point.x,
-            y: window.frame.origin.y + point.y
+        let point = NSPoint(
+            x: screenPoint.x - window.frame.origin.x,
+            y: screenPoint.y - window.frame.origin.y
         )
+
         if let screen = window.screen {
             magnifier.update(at: screenPoint, on: screen)
         }
