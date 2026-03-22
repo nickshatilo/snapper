@@ -22,13 +22,26 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            echo "TAG=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="v$(echo "$VERSION" | awk -F. '{print $1 "." $2}')"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
-            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-            echo "TAG=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+            VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION: "\(.*\)"/\1/p' project.yml | head -n1)"
+            TAG="$GITHUB_REF_NAME"
           fi
+
+          if [ -z "$VERSION" ]; then
+            echo "Failed to determine MARKETING_VERSION" >&2
+            exit 1
+          fi
+
+          EXPECTED_TAG="v$(echo "$VERSION" | awk -F. '{print $1 "." $2}')"
+          if [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "Tag $TAG does not match project version $VERSION (expected $EXPECTED_TAG)" >&2
+            exit 1
+          fi
+
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -44,6 +57,7 @@ jobs:
 
       - name: Import signing certificate
         if: ${{ env.HAS_CERT == 'true' }}
+        id: signing
         env:
           HAS_CERT: ${{ secrets.CERTIFICATE_P12 != '' }}
           CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
@@ -63,7 +77,18 @@ jobs:
 
           security set-key-partition-list -S apple-tool:,apple: \
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\(.*\)"/\1/p' | grep '^Developer ID Application:' | head -n1)"
+          if [ -z "$IDENTITY" ]; then
+            echo "No Developer ID Application identity found in imported keychain" >&2
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+
+          echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
+          echo "keychain=$KEYCHAIN_PATH" >> $GITHUB_OUTPUT
 
       - name: Build release
         env:
@@ -72,8 +97,8 @@ jobs:
           if [ "$HAS_CERT" = "true" ]; then
             SIGN_FLAGS=(
               CODE_SIGN_STYLE=Manual
-              DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM }}"
-              "CODE_SIGN_IDENTITY=${{ secrets.CODE_SIGN_IDENTITY }}"
+              "CODE_SIGN_IDENTITY=${{ steps.signing.outputs.identity }}"
+              "OTHER_CODE_SIGN_FLAGS=--keychain ${{ steps.signing.outputs.keychain }}"
             )
           else
             SIGN_FLAGS=(
