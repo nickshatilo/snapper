@@ -117,6 +117,51 @@ jobs:
             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
             "${SIGN_FLAGS[@]}"
 
+      - name: Sign for distribution
+        if: ${{ env.HAS_CERT == 'true' }}
+        env:
+          HAS_CERT: ${{ secrets.CERTIFICATE_P12 != '' }}
+          IDENTITY: ${{ steps.signing.outputs.identity }}
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/build/Build/Products/Release/Snapper.app"
+          ENT="Snapper/Resources/Snapper.entitlements"
+
+          # Re-sign a nested item, preserving its existing entitlements when it has any.
+          sign_item() {
+            local item="$1"
+            local ent; ent="$(mktemp).plist"
+            if codesign -d --entitlements "$ent" --xml "$item" >/dev/null 2>&1 \
+                 && [ -s "$ent" ] && plutil -lint "$ent" >/dev/null 2>&1; then
+              codesign -f -o runtime --timestamp -s "$IDENTITY" --keychain "$KEYCHAIN" --entitlements "$ent" "$item"
+            else
+              codesign -f -o runtime --timestamp -s "$IDENTITY" --keychain "$KEYCHAIN" "$item"
+            fi
+            rm -f "$ent"
+          }
+
+          # Sparkle ships its nested helpers pre-signed by the Sparkle team and
+          # without a secure timestamp; re-sign them inside-out with our Developer
+          # ID + Hardened Runtime + timestamp so notarization accepts them.
+          SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+          if [ -d "$SPARKLE" ]; then
+            V="$SPARKLE/Versions/B"
+            for x in "$V/XPCServices/Downloader.xpc" "$V/XPCServices/Installer.xpc" \
+                     "$V/Autoupdate" "$V/Updater.app"; do
+              [ -e "$x" ] && sign_item "$x"
+            done
+            codesign -f -o runtime --timestamp -s "$IDENTITY" --keychain "$KEYCHAIN" "$SPARKLE"
+          fi
+
+          # Re-sign the app with explicit entitlements to strip the debug-only
+          # get-task-allow entitlement Xcode injects, and add the secure timestamp.
+          codesign -f -o runtime --timestamp -s "$IDENTITY" --keychain "$KEYCHAIN" \
+            --entitlements "$ENT" "$APP"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "Signed for distribution."
+
       - name: Notarize
         if: ${{ env.HAS_NOTARY == 'true' }}
         env:
