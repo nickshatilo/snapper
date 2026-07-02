@@ -8,9 +8,13 @@ final class PinnedScreenshotPanel: NSPanel {
         didSet { alphaValue = currentOpacity }
     }
     let imageID: UUID
+    let sourceImage: CGImage
+    let sourceScale: CGFloat
 
-    init(image: CGImage, frame: NSRect, id: UUID = UUID()) {
+    init(image: CGImage, scale: CGFloat = 1, frame: NSRect, id: UUID = UUID()) {
         self.imageID = id
+        self.sourceImage = image
+        self.sourceScale = scale
         super.init(
             contentRect: frame,
             styleMask: [.nonactivatingPanel, .resizable, .titled, .fullSizeContentView],
@@ -28,7 +32,14 @@ final class PinnedScreenshotPanel: NSPanel {
         self.hasShadow = true
         self.minSize = NSSize(width: 100, height: 100)
 
-        let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        let pointScale = max(1, scale)
+        let nsImage = NSImage(
+            cgImage: image,
+            size: NSSize(
+                width: CGFloat(image.width) / pointScale,
+                height: CGFloat(image.height) / pointScale
+            )
+        )
         let imageView = NSImageView(image: nsImage)
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.autoresizingMask = [.width, .height]

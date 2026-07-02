@@ -23,6 +23,9 @@ final class AnnotationEditorWindow: NSObject, NSWindowDelegate {
 
         let window = NSWindow(contentViewController: hostingController)
         window.title = "Annotation Editor"
+        // A Swift strong reference plus the AppKit default (release on close)
+        // double-releases the window during close.
+        window.isReleasedWhenClosed = false
         window.setContentSize(NSSize(width: max(720, targetWidth), height: max(520, targetHeight)))
         window.minSize = NSSize(width: 600, height: 400)
         window.center()

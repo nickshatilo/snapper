@@ -92,6 +92,15 @@ final class AppState {
         }
     }
 
+    var hotkeyBindings: [HotkeyAction: HotkeyBinding] {
+        didSet {
+            if let data = try? JSONEncoder().encode(hotkeyBindings) {
+                enqueueDefault(data, forKey: Constants.Keys.hotkeyBindings)
+            }
+            NotificationCenter.default.post(name: .hotkeyBindingsChanged, object: nil)
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
@@ -139,6 +148,13 @@ final class AppState {
 
         self.historyRetentionDays = defaults.object(forKey: Constants.Keys.historyRetentionDays) as? Int ?? 30
         self.defaultPinnedOpacity = defaults.object(forKey: Constants.Keys.defaultPinnedOpacity) as? Double ?? 1.0
+
+        if let data = defaults.data(forKey: Constants.Keys.hotkeyBindings),
+           let stored = try? JSONDecoder().decode([HotkeyAction: HotkeyBinding].self, from: data) {
+            self.hotkeyBindings = stored
+        } else {
+            self.hotkeyBindings = HotkeyBinding.defaultBindings
+        }
     }
 
     private func enqueueDefault(_ value: Any, forKey key: String) {

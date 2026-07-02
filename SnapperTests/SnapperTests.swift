@@ -5,8 +5,9 @@ import AppKit
 
 final class SnapperTests: XCTestCase {
     func testCaptureModeCases() {
-        XCTAssertEqual(CaptureMode.allCases.count, 5)
+        XCTAssertEqual(CaptureMode.allCases.count, 6)
         XCTAssertEqual(CaptureMode.fullscreen.displayName, "Fullscreen")
+        XCTAssertEqual(CaptureMode.scroll.displayName, "Scroll")
     }
 
     func testImageFormatExtensions() {

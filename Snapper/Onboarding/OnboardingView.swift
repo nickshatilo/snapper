@@ -198,6 +198,12 @@ struct OnboardingView: View {
 
     private func finishOnboarding() {
         appState.isFirstRun = false
-        NSApp.keyWindow?.close()
+        // Close the onboarding window specifically; NSApp.keyWindow can be a
+        // different window (or nil) if focus moved to a permissions pane.
+        NotificationCenter.default.post(name: .onboardingFinished, object: nil)
     }
+}
+
+extension Notification.Name {
+    static let onboardingFinished = Notification.Name("onboardingFinished")
 }

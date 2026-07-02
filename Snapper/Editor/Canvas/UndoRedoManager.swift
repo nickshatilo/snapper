@@ -4,6 +4,9 @@ import CoreGraphics
 @Observable
 final class UndoRedoManager {
     private let maxHistoryDepth = 200
+    /// Snapshot actions retain full-resolution CGImages (each crop produces a
+    /// distinct one), so the stacks are bounded by bytes as well as depth.
+    private let maxImageBudgetBytes = 512 * 1024 * 1024
     private var undoStack: [UndoAction] = []
     private var redoStack: [UndoAction] = []
 
@@ -51,8 +54,36 @@ final class UndoRedoManager {
 
     private func trim(_ stack: inout [UndoAction]) {
         let overflow = stack.count - maxHistoryDepth
-        guard overflow > 0 else { return }
-        stack.removeFirst(overflow)
+        if overflow > 0 {
+            stack.removeFirst(overflow)
+        }
+
+        var totalBytes = 0
+        for (index, action) in stack.enumerated().reversed() {
+            totalBytes += approximateCost(of: action)
+            if totalBytes > maxImageBudgetBytes, index < stack.count - 1 {
+                // Keep the newer entries; drop everything at and before the
+                // action that crossed the budget.
+                stack.removeFirst(index + 1)
+                break
+            }
+        }
+    }
+
+    private func approximateCost(of action: UndoAction) -> Int {
+        switch action {
+        case .add, .remove, .modify:
+            return 1024
+        case .snapshot(let old, let new):
+            let oldBytes = imageBytes(old.baseImage)
+            return isSameImage(old.baseImage, new.baseImage)
+                ? oldBytes
+                : oldBytes + imageBytes(new.baseImage)
+        }
+    }
+
+    private func imageBytes(_ image: CGImage) -> Int {
+        image.bytesPerRow * image.height
     }
 
     private func isRedundantSnapshot(oldState: CanvasState.Snapshot, newState: CanvasState.Snapshot) -> Bool {

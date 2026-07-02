@@ -181,10 +181,21 @@ struct AnnotationEditorView: View {
     }
 
     private func exportSave() {
-        guard let image = canvasState.renderFinalImage() else { return }
-        let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Snapper Annotated \(Date().formatted(date: .numeric, time: .shortened)).png")
-        _ = ImageUtils.save(image, to: url, format: .png)
+        guard let image = canvasState.renderFinalImage(),
+              let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
+            return
+        }
+        // FileNameGenerator sanitizes path-hostile characters; a raw formatted
+        // date contains "/" in most locales, which turns the filename into a
+        // nonexistent directory path and makes the save silently fail.
+        let filename = FileNameGenerator.generate(
+            pattern: "Snapper Annotated {date} at {time}",
+            mode: .area
+        )
+        let url = FileManager.default.uniqueURL(
+            for: desktop.appendingPathComponent(filename).appendingPathExtension("png")
+        )
+        saveOrAlert(image, to: url, format: .png)
     }
 
     private func exportSaveAs() {
@@ -195,8 +206,17 @@ struct AnnotationEditorView: View {
         if panel.runModal() == .OK, let url = panel.url {
             let ext = url.pathExtension.lowercased()
             let format: ImageFormat = ext == "jpg" || ext == "jpeg" ? .jpeg : ext == "tiff" ? .tiff : .png
-            _ = ImageUtils.save(image, to: url, format: format)
+            saveOrAlert(image, to: url, format: format)
         }
+    }
+
+    private func saveOrAlert(_ image: CGImage, to url: URL, format: ImageFormat) {
+        guard !ImageUtils.save(image, to: url, format: format) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Save Failed"
+        alert.informativeText = "Couldn't save the image to \(url.path)."
+        alert.runModal()
     }
 
 }

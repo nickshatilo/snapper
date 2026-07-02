@@ -4,7 +4,7 @@ enum BackgroundRenderer {
     static func render(image: CGImage, template: BackgroundTemplate) -> CGImage? {
         let imgWidth = CGFloat(image.width)
         let imgHeight = CGFloat(image.height)
-        let padding = template.padding * 2
+        let padding = template.padding
 
         var canvasWidth = imgWidth + padding * 2
         var canvasHeight = imgHeight + padding * 2

@@ -27,7 +27,12 @@ final class AllInOneHUDPanel {
             return
         }
 
-        guard let screen = NSScreen.main else { return }
+        // Show on the screen the user is working on (mouse location), not the
+        // menu-bar screen.
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) })
+            ?? NSScreen.main
+        guard let screen else { return }
 
         let view = AllInOneHUDView { [weak self] in
             self?.dismiss()

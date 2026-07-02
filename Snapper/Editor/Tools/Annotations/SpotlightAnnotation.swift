@@ -23,14 +23,14 @@ final class SpotlightAnnotation: Annotation {
         // Get canvas bounds from the clip bounding box
         let canvasBounds = context.boundingBoxOfClipPath
 
-        // Draw dark overlay over everything
+        // Dim everything except the spotlight rect. The even-odd clip keeps
+        // the pixels inside `rect` untouched — a `.clear` fill here would
+        // erase the already-composited base image, not just the dim layer.
+        context.addRect(canvasBounds)
+        context.addRect(rect)
+        context.clip(using: .evenOdd)
         context.setFillColor(NSColor.black.withAlphaComponent(dimOpacity).cgColor)
         context.fill(canvasBounds)
-
-        // Clear the spotlight area
-        context.setBlendMode(.clear)
-        context.fill(rect)
-        context.setBlendMode(.normal)
 
         context.restoreGState()
     }

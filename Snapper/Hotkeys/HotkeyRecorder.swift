@@ -3,25 +3,24 @@ import AppKit
 import Carbon.HIToolbox
 
 struct HotkeyRecorder: NSViewRepresentable {
-    @Binding var keyCode: Int?
-    @Binding var modifiers: CGEventFlags
+    let binding: HotkeyBinding?
+    let onChange: (HotkeyBinding) -> Void
 
     func makeNSView(context: Context) -> HotkeyRecorderNSView {
         let view = HotkeyRecorderNSView()
-        view.onKeyCaptured = { code, flags in
-            keyCode = code
-            modifiers = flags
-        }
+        view.onBindingCaptured = onChange
+        view.updateDisplay(binding: binding)
         return view
     }
 
     func updateNSView(_ nsView: HotkeyRecorderNSView, context: Context) {
-        nsView.updateDisplay(keyCode: keyCode, modifiers: modifiers)
+        nsView.onBindingCaptured = onChange
+        nsView.updateDisplay(binding: binding)
     }
 }
 
 final class HotkeyRecorderNSView: NSView {
-    var onKeyCaptured: ((Int, CGEventFlags) -> Void)?
+    var onBindingCaptured: ((HotkeyBinding) -> Void)?
     private var isRecording = false
     private let textField = NSTextField()
     private var localMonitor: Any?
@@ -36,12 +35,18 @@ final class HotkeyRecorderNSView: NSView {
         fatalError("init(coder:) not supported")
     }
 
+    deinit {
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+        }
+    }
+
     private func setupTextField() {
         textField.isEditable = false
         textField.isBezeled = true
         textField.bezelStyle = .roundedBezel
         textField.alignment = .center
-        textField.placeholderString = "Click to record shortcut"
+        textField.placeholderString = "Click to record"
         textField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(textField)
         NSLayoutConstraint.activate([
@@ -96,18 +101,24 @@ final class HotkeyRecorderNSView: NSView {
         if event.modifierFlags.contains(.option) { flags.insert(.maskAlternate) }
         if event.modifierFlags.contains(.control) { flags.insert(.maskControl) }
 
-        onKeyCaptured?(keyCode, flags)
+        // A global shortcut without modifiers would swallow plain typing;
+        // only function keys are allowed bare.
+        if HotkeyBinding.relevantModifiers(from: flags).isEmpty, !Self.functionKeyCodes.contains(keyCode) {
+            return
+        }
+
+        onBindingCaptured?(HotkeyBinding(keyCode: keyCode, modifiers: flags))
         stopRecording()
     }
 
-    func updateDisplay(keyCode: Int?, modifiers: CGEventFlags) {
+    func updateDisplay(binding: HotkeyBinding?) {
         guard !isRecording else { return }
-        if let keyCode {
-            let modStr = KeyCodeMap.modifierSymbols(for: modifiers)
-            let keyStr = KeyCodeMap.name(for: keyCode)
-            textField.stringValue = "\(modStr)\(keyStr)"
-        } else {
-            textField.stringValue = ""
-        }
+        textField.stringValue = binding?.displayString ?? ""
     }
+
+    private static let functionKeyCodes: Set<Int> = [
+        kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8,
+        kVK_F9, kVK_F10, kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15,
+        kVK_F16, kVK_F17, kVK_F18, kVK_F19,
+    ]
 }

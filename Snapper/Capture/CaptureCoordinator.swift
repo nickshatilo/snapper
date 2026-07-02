@@ -3,6 +3,24 @@ import AppKit
 final class CaptureCoordinator {
     private let appState: AppState
     private let captureService = ScreenCaptureService()
+    private lazy var scrollCaptureCoordinator = ScrollCaptureCoordinator(
+        appState: appState,
+        finishCapture: { [weak self] result, options in
+            Task { @MainActor in
+                self?.finishCapture(result: result, options: options)
+            }
+        },
+        handleError: { [weak self] error, context in
+            Task { @MainActor in
+                self?.handleCaptureError(error, context: context)
+            }
+        },
+        onSessionEnd: { [weak self] in
+            Task { @MainActor in
+                self?.appState.isCapturing = false
+            }
+        }
+    )
     private var areaSelectorController: AreaSelectorWindowController?
     private var windowSelectorController: WindowSelectorController?
     private var observerTokens: [NSObjectProtocol] = []
@@ -61,6 +79,8 @@ final class CaptureCoordinator {
             captureArea(options: options)
         case .window:
             captureWindow(options: options)
+        case .scroll:
+            captureScroll(options: options)
         case .ocr:
             NotificationCenter.default.post(name: .startOCRCapture, object: options)
         case .timer:
@@ -78,7 +98,8 @@ final class CaptureCoordinator {
                     timestamp: Date(),
                     sourceRect: capture.sourceRect,
                     windowName: nil,
-                    applicationName: nil
+                    applicationName: nil,
+                    scale: capture.scale
                 )
                 await finishCapture(result: result, options: options)
             } catch {
@@ -101,14 +122,18 @@ final class CaptureCoordinator {
 
             Task {
                 do {
-                    let image = try await self.captureService.captureRect(rect, retinaScale: options.retina2x)
+                    let image = try await self.captureService.captureRect(
+                        CoordinateSpace.appKitToCG(rect),
+                        retinaScale: options.retina2x
+                    )
                     let result = CaptureResult(
                         image: image,
                         mode: .area,
                         timestamp: Date(),
                         sourceRect: rect,
                         windowName: nil,
-                        applicationName: nil
+                        applicationName: nil,
+                        scale: rect.width > 0 ? CGFloat(image.width) / rect.width : 1
                     )
                     await self.finishCapture(result: result, options: options)
                 } catch {
@@ -145,7 +170,10 @@ final class CaptureCoordinator {
                         timestamp: Date(),
                         sourceRect: windowInfo.frame,
                         windowName: windowInfo.title,
-                        applicationName: windowInfo.appName
+                        applicationName: windowInfo.appName,
+                        scale: windowInfo.frame.width > 0
+                            ? CGFloat(image.width) / windowInfo.frame.width
+                            : 1
                     )
                     await self.finishCapture(result: result, options: options)
                 } catch {
@@ -156,13 +184,17 @@ final class CaptureCoordinator {
         windowSelectorController?.show()
     }
 
+    private func captureScroll(options: CaptureOptions) {
+        scrollCaptureCoordinator.start(options: options)
+    }
+
     @MainActor
     func finishCapture(result: CaptureResult, options: CaptureOptions) {
         appState.isCapturing = false
 
         // Copy to clipboard
         if options.copyToClipboard {
-            PasteboardHelper.copyImage(result.image)
+            PasteboardHelper.copyImage(result.image, scale: result.scale)
         }
 
         // Play sound
@@ -180,9 +212,11 @@ final class CaptureCoordinator {
                     mode: result.mode,
                     appName: result.applicationName
                 )
-                let url = options.saveDirectory
-                    .appendingPathComponent(filename)
-                    .appendingPathExtension(options.format.fileExtension)
+                let url = FileManager.default.uniqueURL(
+                    for: options.saveDirectory
+                        .appendingPathComponent(filename)
+                        .appendingPathExtension(options.format.fileExtension)
+                )
                 if ImageUtils.save(result.image, to: url, format: options.format, jpegQuality: options.jpegQuality) {
                     savedURL = url
                     fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0

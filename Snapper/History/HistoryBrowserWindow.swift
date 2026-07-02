@@ -21,6 +21,9 @@ final class HistoryBrowserWindow {
 
         let newWindow = NSWindow(contentViewController: hostingController)
         newWindow.title = "Capture History"
+        // The window is cached and reshown; without this, closing it releases
+        // the instance and the next show() calls into a dangling pointer.
+        newWindow.isReleasedWhenClosed = false
         newWindow.setContentSize(NSSize(width: 800, height: 600))
         newWindow.minSize = NSSize(width: 600, height: 400)
         newWindow.center()

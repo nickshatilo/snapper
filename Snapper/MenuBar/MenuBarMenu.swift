@@ -2,11 +2,26 @@ import AppKit
 
 final class MenuBarMenu: NSMenu {
     private let appState: AppState
+    private var bindingsObserver: NSObjectProtocol?
 
     init(appState: AppState) {
         self.appState = appState
         super.init(title: "Snapper")
         buildMenu()
+        bindingsObserver = NotificationCenter.default.addObserver(
+            forName: .hotkeyBindingsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.removeAllItems()
+            self?.buildMenu()
+        }
+    }
+
+    deinit {
+        if let bindingsObserver {
+            NotificationCenter.default.removeObserver(bindingsObserver)
+        }
     }
 
     @available(*, unavailable)
@@ -15,46 +30,66 @@ final class MenuBarMenu: NSMenu {
     }
 
     private func buildMenu() {
-        // Capture modes
+        // Capture modes; key equivalents mirror the user's actual bindings.
         let captureHeader = NSMenuItem(title: "Capture", action: nil, keyEquivalent: "")
         captureHeader.isEnabled = false
         addItem(captureHeader)
 
-        addItem(makeItem("Capture Fullscreen", action: #selector(captureFullscreen), key: "3", modifiers: [.command, .shift]))
-        addItem(makeItem("Capture Area", action: #selector(captureArea), key: "4", modifiers: [.command, .shift]))
-        addItem(makeItem("All-in-One HUD", action: #selector(showAllInOneHUD), key: "5", modifiers: [.command, .shift]))
-        addItem(makeItem("Capture Window", action: #selector(captureWindow), key: "", modifiers: []))
+        addItem(makeItem("Capture Fullscreen", action: #selector(captureFullscreen), hotkeyAction: .captureFullscreen))
+        addItem(makeItem("Capture Area", action: #selector(captureArea), hotkeyAction: .captureArea))
+        addItem(makeItem("All-in-One HUD", action: #selector(showAllInOneHUD), hotkeyAction: .allInOneHUD))
+        addItem(makeItem("Capture Window", action: #selector(captureWindow), hotkeyAction: .captureWindow))
+        addItem(makeItem("Capture Scroll", action: #selector(captureScroll), hotkeyAction: .captureScroll))
 
         addItem(NSMenuItem.separator())
 
-        addItem(makeItem("Timer Capture", action: #selector(timerCapture), key: "", modifiers: []))
+        addItem(makeItem("Timer Capture", action: #selector(timerCapture), hotkeyAction: .timerCapture))
 
         addItem(NSMenuItem.separator())
 
-        addItem(makeItem("Toggle Desktop Icons", action: #selector(toggleDesktopIcons), key: "", modifiers: []))
+        addItem(makeItem("Toggle Desktop Icons", action: #selector(toggleDesktopIcons), hotkeyAction: .toggleDesktopIcons))
 
         addItem(NSMenuItem.separator())
 
-        // History
-        addItem(makeItem("History", action: #selector(showHistory), key: "h", modifiers: [.command, .shift]))
+        // History & Settings deliberately have no key equivalents: equivalents
+        // in a status-item menu only fire while the menu is open, so showing
+        // them would advertise shortcuts that don't work.
+        addItem(makeItem("History", action: #selector(showHistory)))
 
         addItem(NSMenuItem.separator())
 
-        // Settings & Quit
-        addItem(makeItem("Privacy Permissions...", action: #selector(showPermissions), key: "", modifiers: []))
-        addItem(makeItem("Settings...", action: #selector(showSettings), key: ",", modifiers: [.command]))
-        addItem(makeItem("Check for Updates...", action: #selector(checkForUpdates), key: "", modifiers: []))
+        addItem(makeItem("Privacy Permissions...", action: #selector(showPermissions)))
+        addItem(makeItem("Settings...", action: #selector(showSettings)))
+        addItem(makeItem("Check for Updates...", action: #selector(checkForUpdates)))
 
         addItem(NSMenuItem.separator())
 
-        addItem(makeItem("Quit Snapper", action: #selector(quitApp), key: "q", modifiers: [.command]))
+        let quitItem = makeItem("Quit Snapper", action: #selector(quitApp))
+        quitItem.keyEquivalent = "q"
+        quitItem.keyEquivalentModifierMask = [.command]
+        addItem(quitItem)
     }
 
-    private func makeItem(_ title: String, action: Selector, key: String, modifiers: NSEvent.ModifierFlags) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        item.keyEquivalentModifierMask = modifiers
+    private func makeItem(_ title: String, action: Selector, hotkeyAction: HotkeyAction? = nil) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        if let hotkeyAction, let binding = appState.hotkeyBindings[hotkeyAction] {
+            let keyName = KeyCodeMap.name(for: binding.keyCode)
+            if keyName.count == 1 {
+                item.keyEquivalent = keyName.lowercased()
+                item.keyEquivalentModifierMask = modifierFlags(from: binding.modifiers)
+            }
+        }
         item.target = self
         return item
+    }
+
+    private func modifierFlags(from flags: CGEventFlags) -> NSEvent.ModifierFlags {
+        var result: NSEvent.ModifierFlags = []
+        if flags.contains(.maskCommand) { result.insert(.command) }
+        if flags.contains(.maskShift) { result.insert(.shift) }
+        if flags.contains(.maskAlternate) { result.insert(.option) }
+        if flags.contains(.maskControl) { result.insert(.control) }
+        return result
     }
 
     @objc private func captureFullscreen() {
@@ -67,6 +102,10 @@ final class MenuBarMenu: NSMenu {
 
     @objc private func captureWindow() {
         NotificationCenter.default.post(name: .startCapture, object: CaptureMode.window)
+    }
+
+    @objc private func captureScroll() {
+        NotificationCenter.default.post(name: .startCapture, object: CaptureMode.scroll)
     }
 
     @objc private func showAllInOneHUD() {

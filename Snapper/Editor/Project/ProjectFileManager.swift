@@ -28,13 +28,18 @@ enum ProjectFileManager {
     }
 
     static func load(from url: URL) throws -> (SnapperProject, CGImage) {
-        let projectURL = url.appendingPathComponent("project.json")
+        // save(project:image:to:) appends the extension to the URL it's
+        // given; accept either the base URL or the bundle URL here.
+        let bundleURL = url.pathExtension == fileExtension
+            ? url
+            : url.appendingPathExtension(fileExtension)
+        let projectURL = bundleURL.appendingPathComponent("project.json")
         let data = try Data(contentsOf: projectURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let project = try decoder.decode(SnapperProject.self, from: data)
 
-        let imageURL = url.appendingPathComponent(project.originalImageFilename)
+        let imageURL = bundleURL.appendingPathComponent(project.originalImageFilename)
         guard let nsImage = NSImage(contentsOf: imageURL),
               let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             throw ProjectError.imageNotFound

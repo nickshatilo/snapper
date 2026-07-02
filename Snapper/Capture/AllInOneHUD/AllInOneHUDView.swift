@@ -9,11 +9,12 @@ struct AllInOneHUDView: View {
         (.fullscreen, "rectangle.dashed"),
         (.area, "crop"),
         (.window, "macwindow"),
+        (.scroll, "arrow.down.to.line.compact"),
         (.ocr, "text.viewfinder"),
     ]
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             ForEach(modes, id: \.0) { mode, icon in
                 Button(action: { selectedMode = mode }) {
                     VStack(spacing: 4) {
@@ -22,7 +23,7 @@ struct AllInOneHUDView: View {
                         Text(mode.displayName)
                             .font(.caption2)
                     }
-                    .frame(width: 60, height: 52)
+                    .frame(width: 64, height: 52)
                     .background(selectedMode == mode ? Color.accentColor.opacity(0.3) : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }

@@ -72,7 +72,8 @@ final class QuickAccessManager {
             savedURL: info.savedURL,
             width: info.result.width,
             height: info.result.height,
-            fileSize: info.fileSize
+            fileSize: info.fileSize,
+            scale: info.result.scale
         )
         withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.86, blendDuration: 0.12)) {
             captures.insert(capture, at: 0)
@@ -201,6 +202,7 @@ struct QuickAccessCapture: Identifiable {
     let width: Int
     let height: Int
     let fileSize: Int
+    let scale: CGFloat
 
     var formattedFileSize: String {
         ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)

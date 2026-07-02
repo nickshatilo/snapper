@@ -40,6 +40,7 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .general
     @State private var storageSize: String = "Calculating..."
     @State private var showClearHistoryConfirmation = false
+    @State private var shortcutConflictMessage: String?
 
     var body: some View {
         @Bindable var appState = appState
@@ -395,14 +396,47 @@ struct SettingsView: View {
         SettingsSection(title: "Capture Shortcuts", drawsDivider: false) {
             ForEach(HotkeyAction.allCases, id: \.self) { action in
                 RowWithTrailingControl(title: action.displayName) {
-                    Text(defaultShortcut(for: action))
-                        .font(.system(.caption, design: .monospaced))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                    HStack(spacing: 6) {
+                        HotkeyRecorder(binding: appState.hotkeyBindings[action]) { newBinding in
+                            assignShortcut(newBinding, to: action)
+                        }
+                        .frame(width: 160, height: 24)
+
+                        Button {
+                            appState.hotkeyBindings[action] = nil
+                            shortcutConflictMessage = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .disabled(appState.hotkeyBindings[action] == nil)
+                        .help("Remove shortcut")
+                    }
                 }
             }
+
+            if let shortcutConflictMessage {
+                Text(shortcutConflictMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Button("Reset to Defaults") {
+                appState.hotkeyBindings = HotkeyBinding.defaultBindings
+                shortcutConflictMessage = nil
+            }
+            .buttonStyle(.bordered)
         }
+    }
+
+    private func assignShortcut(_ binding: HotkeyBinding, to action: HotkeyAction) {
+        if let conflict = appState.hotkeyBindings.first(where: { $0.value == binding && $0.key != action }) {
+            shortcutConflictMessage = "\(binding.displayString) is already assigned to \(conflict.key.displayName)."
+            return
+        }
+        shortcutConflictMessage = nil
+        appState.hotkeyBindings[action] = binding
     }
 
     private var aboutSection: some View {
@@ -431,17 +465,6 @@ struct SettingsView: View {
             Text("Open source macOS screenshot tool.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private func defaultShortcut(for action: HotkeyAction) -> String {
-        switch action {
-        case .captureFullscreen: return "⌘⇧3"
-        case .captureArea: return "⌘⇧4"
-        case .captureWindow: return "—"
-        case .ocrCapture: return "—"
-        case .timerCapture: return "—"
-        case .toggleDesktopIcons: return "—"
         }
     }
 

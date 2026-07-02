@@ -40,21 +40,29 @@ enum ImageUtils {
     }
 
     static func resize(_ image: CGImage, to size: CGSize) -> CGImage? {
+        let width = Int(size.width.rounded())
+        let height = Int(size.height.rounded())
+        guard width > 0, height > 0 else { return nil }
+
+        // Use a standard pixel format rather than inheriting the source's;
+        // CGContext rejects several source formats (e.g. float components),
+        // which would silently drop the thumbnail.
         let context = CGContext(
             data: nil,
-            width: Int(size.width),
-            height: Int(size.height),
-            bitsPerComponent: image.bitsPerComponent,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: image.bitmapInfo.rawValue
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )
         context?.interpolationQuality = .high
-        context?.draw(image, in: CGRect(origin: .zero, size: size))
+        context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return context?.makeImage()
     }
 
     static func generateThumbnail(_ image: CGImage, maxWidth: CGFloat = Constants.Defaults.thumbnailWidth) -> CGImage? {
+        guard image.width > 0, image.height > 0 else { return nil }
         let aspectRatio = CGFloat(image.height) / CGFloat(image.width)
         let targetWidth = min(maxWidth, CGFloat(image.width))
         let targetHeight = targetWidth * aspectRatio

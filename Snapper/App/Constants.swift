@@ -24,6 +24,7 @@ enum Constants {
         static let windowCaptureIncludeShadow = "windowCaptureIncludeShadow"
         static let hideDesktopIcons = "hideDesktopIcons"
         static let autoCheckUpdates = "autoCheckUpdates"
+        static let hotkeyBindings = "hotkeyBindings"
     }
 
     enum Defaults {

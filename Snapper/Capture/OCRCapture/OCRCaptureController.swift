@@ -39,7 +39,7 @@ final class OCRCaptureController {
             Task {
                 do {
                     let image = try await self.captureService.captureRect(
-                        rect,
+                        CoordinateSpace.appKitToCG(rect),
                         retinaScale: options?.retina2x ?? true
                     )
                     await MainActor.run {

@@ -1,6 +1,10 @@
 import AppKit
 import ScreenCaptureKit
 
+/// All rects and points passed to this service are CG top-left global
+/// coordinates (the native space of ScreenCaptureKit's `SCDisplay.frame`,
+/// `SCWindow.frame`, and `SCStreamConfiguration.sourceRect`). Callers holding
+/// AppKit screen rects must convert via `CoordinateSpace.appKitToCG` first.
 final class ScreenCaptureService {
     struct MultiDisplayCapture {
         let image: CGImage
@@ -9,10 +13,10 @@ final class ScreenCaptureService {
     }
 
     struct RectCaptureContext {
-        fileprivate let displayFrame: CGRect
-        fileprivate let displayScale: CGFloat
-        fileprivate let filter: SCContentFilter
-        fileprivate let configuration: SCStreamConfiguration
+        let displayFrame: CGRect
+        let displayScale: CGFloat
+        let filter: SCContentFilter
+        let configuration: SCStreamConfiguration
     }
 
     private var cachedContent: SCShareableContent?
@@ -239,9 +243,11 @@ final class ScreenCaptureService {
         context.scaleBy(x: 1, y: -1)
 
         for captured in capturedDisplays {
+            // Placement must match the CG top-left convention used by `crop()`:
+            // the composed image's top row corresponds to `unionRect.minY`.
             let targetRect = CGRect(
                 x: (captured.frame.minX - unionRect.minX) * canvasScale,
-                y: (unionRect.maxY - captured.frame.maxY) * canvasScale,
+                y: (captured.frame.minY - unionRect.minY) * canvasScale,
                 width: captured.frame.width * canvasScale,
                 height: captured.frame.height * canvasScale
             ).integral
@@ -260,10 +266,10 @@ final class ScreenCaptureService {
     }
 
     private func crop(rect: CGRect, from image: CGImage, sourceRect: CGRect, scale: CGFloat) throws -> CGImage {
-        // Convert from global point-space to image pixel-space (top-left origin).
+        // Both rects are CG top-left global point-space; scale into pixel-space.
         let localRect = CGRect(
             x: (rect.minX - sourceRect.minX) * scale,
-            y: (sourceRect.maxY - rect.maxY) * scale,
+            y: (rect.minY - sourceRect.minY) * scale,
             width: rect.width * scale,
             height: rect.height * scale
         ).integral

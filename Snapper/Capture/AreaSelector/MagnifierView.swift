@@ -6,8 +6,6 @@ final class MagnifierView: NSView {
     private let zoomFactor: CGFloat = Constants.Defaults.magnifierZoom
     private let borderWidth: CGFloat = 2.0
 
-    override var isFlipped: Bool { true }
-
     override init(frame: NSRect) {
         super.init(frame: NSRect(x: 0, y: 0, width: magnifierSize, height: magnifierSize))
         wantsLayer = true
@@ -24,9 +22,11 @@ final class MagnifierView: NSView {
 
     func update(at point: NSPoint, on screen: NSScreen) {
         let captureSize = magnifierSize / zoomFactor
+        // CGWindowListCreateImage expects CG top-left global coordinates.
+        let cgPoint = CoordinateSpace.appKitToCG(point)
         let captureRect = CGRect(
-            x: point.x - captureSize / 2,
-            y: point.y - captureSize / 2,
+            x: cgPoint.x - captureSize / 2,
+            y: cgPoint.y - captureSize / 2,
             width: captureSize,
             height: captureSize
         )

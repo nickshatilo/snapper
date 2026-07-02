@@ -59,7 +59,7 @@ struct CaptureThumbnailView: View {
         HStack(spacing: 4) {
             OverlayIconButton(icon: "doc.on.doc", tooltip: "Copy") {
                 if let image = capture.resolvedImage() {
-                    PasteboardHelper.copyImage(image)
+                    PasteboardHelper.copyImage(image, scale: capture.scale)
                 }
             }
             OverlayIconButton(icon: "square.and.arrow.down", tooltip: "Reveal File") {
@@ -69,7 +69,10 @@ struct CaptureThumbnailView: View {
             }
             OverlayIconButton(icon: "pin", tooltip: "Pin") {
                 if let image = capture.resolvedImage() {
-                    NotificationCenter.default.post(name: .pinScreenshot, object: ImageWrapper(image))
+                    NotificationCenter.default.post(
+                        name: .pinScreenshot,
+                        object: ImageWrapper(image, scale: capture.scale)
+                    )
                     manager.removeCapture(capture.id)
                 }
             }
@@ -99,9 +102,13 @@ struct CaptureThumbnailView: View {
         guard let image = capture.resolvedImage() else {
             return NSItemProvider()
         }
+        let pointScale = capture.scale > 0 ? capture.scale : 1
         let nsImage = NSImage(
             cgImage: image,
-            size: NSSize(width: image.width, height: image.height)
+            size: NSSize(
+                width: CGFloat(image.width) / pointScale,
+                height: CGFloat(image.height) / pointScale
+            )
         )
         let provider = NSItemProvider(object: nsImage)
         provider.suggestedName = "Snapper Screenshot"

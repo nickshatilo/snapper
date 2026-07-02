@@ -25,7 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        ensureSingleInstance()
+        // NSApp.terminate is deferred to the next run-loop pass, so a
+        // duplicate instance must not construct status items or event taps.
+        guard ensureSingleInstance() else { return }
         ProcessInfo.processInfo.disableAutomaticTermination("Snapper should stay alive as a menu bar utility.")
 
         // Core services
@@ -98,16 +100,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         enforceReachability()
     }
 
-    private func ensureSingleInstance() {
-        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+    private func ensureSingleInstance() -> Bool {
+        // The unit-test host must not terminate itself when a regular Snapper
+        // instance is already running.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return true }
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return true }
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
 
         for runningApp in runningApps where runningApp.processIdentifier != currentPID {
             runningApp.activate(options: [.activateAllWindows])
             NSApp.terminate(nil)
-            return
+            return false
         }
+        return true
     }
 
     private func showOnboarding() {
@@ -130,6 +136,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.showOnboarding()
         }
         observerTokens.append(showOnboardingToken)
+
+        let onboardingFinishedToken = NotificationCenter.default.addObserver(forName: .onboardingFinished, object: nil, queue: .main) { [weak self] _ in
+            self?.onboardingWindowController?.close()
+            self?.onboardingWindowController = nil
+        }
+        observerTokens.append(onboardingFinishedToken)
 
         let requestPermissionsToken = NotificationCenter.default.addObserver(forName: .requestPermissions, object: nil, queue: .main) { [weak self] _ in
             self?.requestPermissions()
@@ -236,6 +248,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             newWindow.center()
             settingsWindow = newWindow
             window = newWindow
+
+            // Settings writes are debounced; flush when the window closes so
+            // changes survive an abnormal exit shortly after.
+            let flushToken = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: newWindow,
+                queue: .main
+            ) { [weak self] _ in
+                self?.appState.flushDefaults()
+            }
+            observerTokens.append(flushToken)
         }
 
         window.makeKeyAndOrderFront(nil)
