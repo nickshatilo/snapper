@@ -103,7 +103,7 @@ final class HistoryManager {
             let descriptor = FetchDescriptor<CaptureRecord>(predicate: predicate)
             guard let record = try? modelContainer.mainContext.fetch(descriptor).first else { return }
 
-            Self.removeFiles(for: record)
+            Self.removeManagedFiles(for: record)
             modelContainer.mainContext.delete(record)
             try? modelContainer.mainContext.save()
             NotificationCenter.default.post(name: .historyDidChange, object: nil)
@@ -119,7 +119,7 @@ final class HistoryManager {
             guard let records = try? modelContainer.mainContext.fetch(descriptor), !records.isEmpty else { return }
 
             for record in records {
-                Self.removeFiles(for: record)
+                Self.removeManagedFiles(for: record)
                 modelContainer.mainContext.delete(record)
             }
             try? modelContainer.mainContext.save()
@@ -139,7 +139,7 @@ final class HistoryManager {
             guard let records = try? modelContainer.mainContext.fetch(descriptor), !records.isEmpty else { return }
 
             for record in records {
-                Self.removeFiles(for: record)
+                Self.removeManagedFiles(for: record)
                 modelContainer.mainContext.delete(record)
             }
             try? modelContainer.mainContext.save()
@@ -147,10 +147,7 @@ final class HistoryManager {
         }
     }
 
-    private static func removeFiles(for record: CaptureRecord) {
-        if !record.filePath.isEmpty {
-            try? FileManager.default.removeItem(atPath: record.filePath)
-        }
+    static func removeManagedFiles(for record: CaptureRecord) {
         if let thumbPath = record.thumbnailPath {
             try? FileManager.default.removeItem(atPath: thumbPath)
         }

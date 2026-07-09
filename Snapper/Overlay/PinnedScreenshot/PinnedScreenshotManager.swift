@@ -39,6 +39,15 @@ final class PinnedScreenshotManager {
         }
         observerTokens.append(closeToken)
 
+        let lockToken = NotificationCenter.default.addObserver(
+            forName: .pinnedLockChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.persistState()
+        }
+        observerTokens.append(lockToken)
+
         let opacityToken = NotificationCenter.default.addObserver(
             forName: .pinnedOpacityChanged,
             object: nil,

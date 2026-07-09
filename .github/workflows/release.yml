@@ -56,13 +56,17 @@ jobs:
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm"
 
       - name: Import signing certificate
-        if: ${{ env.HAS_CERT == 'true' }}
         id: signing
         env:
           HAS_CERT: ${{ secrets.CERTIFICATE_P12 != '' }}
           CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
           CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
         run: |
+          if [ "$HAS_CERT" != "true" ]; then
+            echo "CERTIFICATE_P12 is required; refusing to create an unsigned release." >&2
+            exit 1
+          fi
+
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
 
@@ -91,21 +95,12 @@ jobs:
           echo "keychain=$KEYCHAIN_PATH" >> $GITHUB_OUTPUT
 
       - name: Build release
-        env:
-          HAS_CERT: ${{ secrets.CERTIFICATE_P12 != '' }}
         run: |
-          if [ "$HAS_CERT" = "true" ]; then
-            SIGN_FLAGS=(
-              CODE_SIGN_STYLE=Manual
-              "CODE_SIGN_IDENTITY=${{ steps.signing.outputs.identity }}"
-              "OTHER_CODE_SIGN_FLAGS=--keychain ${{ steps.signing.outputs.keychain }}"
-            )
-          else
-            SIGN_FLAGS=(
-              CODE_SIGN_IDENTITY="-"
-              CODE_SIGNING_ALLOWED=NO
-            )
-          fi
+          SIGN_FLAGS=(
+            CODE_SIGN_STYLE=Manual
+            "CODE_SIGN_IDENTITY=${{ steps.signing.outputs.identity }}"
+            "OTHER_CODE_SIGN_FLAGS=--keychain ${{ steps.signing.outputs.keychain }}"
+          )
 
           xcodebuild build \
             -scheme Snapper \
@@ -118,9 +113,7 @@ jobs:
             "${SIGN_FLAGS[@]}"
 
       - name: Sign for distribution
-        if: ${{ env.HAS_CERT == 'true' }}
         env:
-          HAS_CERT: ${{ secrets.CERTIFICATE_P12 != '' }}
           IDENTITY: ${{ steps.signing.outputs.identity }}
           KEYCHAIN: ${{ steps.signing.outputs.keychain }}
         run: |
@@ -163,13 +156,17 @@ jobs:
           echo "Signed for distribution."
 
       - name: Notarize
-        if: ${{ env.HAS_NOTARY == 'true' }}
         env:
           HAS_NOTARY: ${{ secrets.NOTARY_APPLE_ID != '' }}
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
           NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
         run: |
+          if [ "$HAS_NOTARY" != "true" ] || [ -z "$NOTARY_PASSWORD" ] || [ -z "$NOTARY_TEAM_ID" ]; then
+            echo "Apple notarization credentials are required; refusing to publish an unnotarized release." >&2
+            exit 1
+          fi
+
           APP_PATH="$RUNNER_TEMP/build/Build/Products/Release/Snapper.app"
           ZIP_PATH="$RUNNER_TEMP/notarize.zip"
 

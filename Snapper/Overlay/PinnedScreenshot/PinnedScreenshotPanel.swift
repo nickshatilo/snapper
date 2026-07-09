@@ -2,7 +2,7 @@ import AppKit
 
 final class PinnedScreenshotPanel: NSPanel {
     var isLocked = false {
-        didSet { ignoresMouseEvents = isLocked }
+        didSet { applyLockedState() }
     }
     var currentOpacity: CGFloat = 1.0 {
         didSet { alphaValue = currentOpacity }
@@ -120,6 +120,7 @@ final class PinnedScreenshotPanel: NSPanel {
 
     @objc private func toggleLock() {
         isLocked.toggle()
+        NotificationCenter.default.post(name: .pinnedLockChanged, object: imageID)
     }
 
     @objc private func closePanel() {
@@ -130,4 +131,21 @@ final class PinnedScreenshotPanel: NSPanel {
 
 extension Notification.Name {
     static let pinnedScreenshotClosed = Notification.Name("pinnedScreenshotClosed")
+    static let pinnedLockChanged = Notification.Name("pinnedLockChanged")
+}
+
+private extension PinnedScreenshotPanel {
+    func applyLockedState() {
+        // A locked pin must still receive right-clicks so its Unlock command is
+        // reachable. Lock its geometry instead of making the entire panel
+        // click-through and permanently inaccessible.
+        ignoresMouseEvents = false
+        isMovable = !isLocked
+        isMovableByWindowBackground = !isLocked
+        if isLocked {
+            styleMask.remove(.resizable)
+        } else {
+            styleMask.insert(.resizable)
+        }
+    }
 }

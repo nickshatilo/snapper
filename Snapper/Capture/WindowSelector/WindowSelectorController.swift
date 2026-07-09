@@ -54,7 +54,9 @@ final class WindowSelectorController {
             // Keep ownership under ARC via `overlayWindows`; don't let close() release the instance.
             window.isReleasedWhenClosed = false
 
-            let overlay = WindowHighlightOverlay(frame: screen.frame)
+            let overlay = WindowHighlightOverlay(
+                frame: NSRect(origin: .zero, size: screen.frame.size)
+            )
             window.contentView = overlay
             window.makeKeyAndOrderFront(nil)
             overlayWindows.append(window)
@@ -71,21 +73,22 @@ final class WindowSelectorController {
         switch event.type {
         case .mouseMoved:
             let mouseLocation = NSEvent.mouseLocation
-            if let hoveredWindow = hitTestWindow(at: mouseLocation) {
+            if let hoveredWindow = hitTestWindow(atAppKitPoint: mouseLocation) {
+                let appKitFrame = CoordinateSpace.cgToAppKit(hoveredWindow.frame)
                 for overlay in highlightOverlays {
-                    overlay.highlightFrame = hoveredWindow.frame
+                    overlay.highlightScreenFrame = appKitFrame
                     overlay.needsDisplay = true
                 }
             } else {
                 for overlay in highlightOverlays {
-                    overlay.highlightFrame = nil
+                    overlay.highlightScreenFrame = nil
                     overlay.needsDisplay = true
                 }
             }
 
         case .leftMouseDown:
             let mouseLocation = NSEvent.mouseLocation
-            if let selectedWindow = hitTestWindow(at: mouseLocation) {
+            if let selectedWindow = hitTestWindow(atAppKitPoint: mouseLocation) {
                 let info = WindowInfo(
                     window: selectedWindow,
                     frame: selectedWindow.frame,
@@ -107,11 +110,12 @@ final class WindowSelectorController {
         }
     }
 
-    private func hitTestWindow(at point: NSPoint) -> SCWindow? {
+    private func hitTestWindow(atAppKitPoint point: NSPoint) -> SCWindow? {
+        let cgPoint = CoordinateSpace.appKitToCG(point)
         // Sort by z-order (windows array is already in front-to-back order)
         for window in windows {
             let frame = window.frame
-            if frame.contains(point) {
+            if frame.contains(cgPoint) {
                 return window
             }
         }

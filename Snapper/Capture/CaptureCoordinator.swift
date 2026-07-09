@@ -2,6 +2,7 @@ import AppKit
 
 final class CaptureCoordinator {
     private let appState: AppState
+    private let notificationCenter: NotificationCenter
     private let captureService = ScreenCaptureService()
     private lazy var scrollCaptureCoordinator = ScrollCaptureCoordinator(
         appState: appState,
@@ -25,29 +26,33 @@ final class CaptureCoordinator {
     private var windowSelectorController: WindowSelectorController?
     private var observerTokens: [NSObjectProtocol] = []
 
-    init(appState: AppState) {
+    init(appState: AppState, notificationCenter: NotificationCenter = .default) {
         self.appState = appState
+        self.notificationCenter = notificationCenter
         observeCaptureTriggers()
     }
 
     deinit {
         for token in observerTokens {
-            NotificationCenter.default.removeObserver(token)
+            notificationCenter.removeObserver(token)
         }
     }
 
     private func observeCaptureTriggers() {
-        let token = NotificationCenter.default.addObserver(
+        let token = notificationCenter.addObserver(
             forName: .startCapture,
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            guard let mode = notification.object as? CaptureMode else { return }
-            self?.startCapture(mode: mode)
+            if let request = notification.object as? TimerCaptureRequest {
+                self?.startTimerCapture(request: request)
+            } else if let mode = notification.object as? CaptureMode {
+                self?.startCapture(mode: mode)
+            }
         }
         observerTokens.append(token)
 
-        let ocrFinishToken = NotificationCenter.default.addObserver(
+        let ocrFinishToken = notificationCenter.addObserver(
             forName: .ocrCaptureDidFinish,
             object: nil,
             queue: .main
@@ -56,12 +61,21 @@ final class CaptureCoordinator {
         }
         observerTokens.append(ocrFinishToken)
 
-        let timerFinishToken = NotificationCenter.default.addObserver(
+        let timerFinishToken = notificationCenter.addObserver(
             forName: .timerCaptureDidFinish,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            self?.appState.isCapturing = false
+        ) { [weak self] notification in
+            guard let self else { return }
+            if let mode = notification.object as? CaptureMode {
+                // The countdown owns the existing capture reservation. Continue
+                // directly instead of re-entering startCapture and hitting its guard.
+                guard self.appState.isCapturing else { return }
+                self.performCapture(mode: mode == .timer ? .fullscreen : mode)
+            } else {
+                // A nil mode means the countdown was cancelled or could not start.
+                self.appState.isCapturing = false
+            }
         }
         observerTokens.append(timerFinishToken)
     }
@@ -70,6 +84,16 @@ final class CaptureCoordinator {
         guard !appState.isCapturing else { return }
         appState.isCapturing = true
 
+        performCapture(mode: mode)
+    }
+
+    private func startTimerCapture(request: TimerCaptureRequest) {
+        guard !appState.isCapturing else { return }
+        appState.isCapturing = true
+        notificationCenter.post(name: .startTimerCapture, object: request)
+    }
+
+    private func performCapture(mode: CaptureMode) {
         let options = CaptureOptions.from(appState: appState)
 
         switch mode {
@@ -82,9 +106,9 @@ final class CaptureCoordinator {
         case .scroll:
             captureScroll(options: options)
         case .ocr:
-            NotificationCenter.default.post(name: .startOCRCapture, object: options)
+            notificationCenter.post(name: .startOCRCapture, object: options)
         case .timer:
-            NotificationCenter.default.post(name: .startTimerCapture, object: TimerCaptureRequest.default)
+            notificationCenter.post(name: .startTimerCapture, object: TimerCaptureRequest.default)
         }
     }
 

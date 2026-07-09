@@ -61,7 +61,7 @@ struct AllInOneHUDView: View {
 
         if timerSeconds > 0 {
             NotificationCenter.default.post(
-                name: .startTimerCapture,
+                name: .startCapture,
                 object: TimerCaptureRequest(seconds: timerSeconds, mode: selectedMode)
             )
         } else {

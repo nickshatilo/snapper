@@ -1,7 +1,8 @@
 import AppKit
 
 final class WindowHighlightOverlay: NSView {
-    var highlightFrame: CGRect?
+    /// Highlight rect in AppKit's global screen coordinate space.
+    var highlightScreenFrame: CGRect?
 
     private let highlightColor = NSColor.systemBlue.withAlphaComponent(0.3)
     private let borderColor = NSColor.systemBlue
@@ -10,10 +11,15 @@ final class WindowHighlightOverlay: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let context = NSGraphicsContext.current?.cgContext,
-              let frame = highlightFrame else { return }
+              let screenFrame = highlightScreenFrame,
+              let window else { return }
 
-        // Convert screen coordinates to view coordinates
-        let viewFrame = convert(frame, from: nil)
+        // ScreenCaptureKit frames are converted to global AppKit coordinates by
+        // the controller. Convert once more through this overlay's window so
+        // highlights land correctly on every display, not just the primary one.
+        let windowFrame = window.convertFromScreen(screenFrame)
+        let viewFrame = convert(windowFrame, from: nil).intersection(bounds)
+        guard !viewFrame.isNull, !viewFrame.isEmpty else { return }
 
         context.setFillColor(highlightColor.cgColor)
         context.fill(viewFrame)

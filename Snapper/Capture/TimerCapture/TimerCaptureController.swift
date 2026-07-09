@@ -16,12 +16,14 @@ struct TimerCaptureRequest {
 }
 
 final class TimerCaptureController {
+    private let notificationCenter: NotificationCenter
     private var countdownWindow: NSWindow?
     private var timer: Timer?
     private var observerToken: NSObjectProtocol?
 
-    init() {
-        observerToken = NotificationCenter.default.addObserver(
+    init(notificationCenter: NotificationCenter = .default) {
+        self.notificationCenter = notificationCenter
+        observerToken = notificationCenter.addObserver(
             forName: .startTimerCapture,
             object: nil,
             queue: .main
@@ -36,18 +38,17 @@ final class TimerCaptureController {
         countdownWindow?.close()
         countdownWindow = nil
         if let observerToken {
-            NotificationCenter.default.removeObserver(observerToken)
+            notificationCenter.removeObserver(observerToken)
         }
     }
 
     func start(seconds: Int, mode: CaptureMode) {
-        let hadExistingCountdown = timer != nil
         cancelExistingCountdown()
-        if hadExistingCountdown {
-            NotificationCenter.default.post(name: .timerCaptureDidFinish, object: nil)
-        }
-        showCountdown(seconds: seconds) {
-            NotificationCenter.default.post(name: .startCapture, object: mode)
+        guard showCountdown(seconds: seconds, completion: { [notificationCenter] in
+            notificationCenter.post(name: .timerCaptureDidFinish, object: mode)
+        }) else {
+            notificationCenter.post(name: .timerCaptureDidFinish, object: nil)
+            return
         }
     }
 
@@ -58,8 +59,9 @@ final class TimerCaptureController {
         countdownWindow = nil
     }
 
-    private func showCountdown(seconds: Int, completion: @escaping () -> Void) {
-        guard let screen = NSScreen.main else { return }
+    @discardableResult
+    private func showCountdown(seconds: Int, completion: @escaping () -> Void) -> Bool {
+        guard let screen = NSScreen.main else { return false }
 
         let window = NSWindow(
             contentRect: screen.frame,
@@ -93,5 +95,6 @@ final class TimerCaptureController {
                 countdownView.setCountdown(remaining)
             }
         }
+        return true
     }
 }

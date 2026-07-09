@@ -135,7 +135,23 @@ struct AnnotationEditorView: View {
         }
 
         if keyPress.modifiers.contains(.command) {
-            if keyPress.characters == "z" {
+            let characters = keyPress.characters.lowercased()
+
+            if characters == "c", !keyPress.modifiers.contains(.shift) {
+                exportToClipboard()
+                return .handled
+            }
+
+            if characters == "s" {
+                if keyPress.modifiers.contains(.shift) {
+                    exportSaveAs()
+                } else {
+                    exportSave()
+                }
+                return .handled
+            }
+
+            if characters == "z" {
                 if keyPress.modifiers.contains(.shift) {
                     canvasState.undoManager.redo(state: canvasState)
                 } else {
@@ -144,7 +160,7 @@ struct AnnotationEditorView: View {
                 return .handled
             }
 
-            if keyPress.characters == "u" {
+            if characters == "u" {
                 if keyPress.modifiers.contains(.shift) {
                     canvasState.undoManager.redo(state: canvasState)
                 } else {
