@@ -1,5 +1,71 @@
 import AppKit
 
+struct AreaSelectionResult {
+    let rect: CGRect
+    let frozenImage: CGImage?
+}
+
+struct FrozenScreenSnapshot {
+    struct Display {
+        let frame: CGRect
+        let image: CGImage
+
+        var scaleX: CGFloat { CGFloat(image.width) / frame.width }
+        var scaleY: CGFloat { CGFloat(image.height) / frame.height }
+    }
+
+    let displays: [Display]
+
+    func image(for rect: CGRect, retinaScale: Bool) -> CGImage? {
+        let intersecting = displays.filter { $0.frame.intersects(rect) }
+        guard !intersecting.isEmpty, rect.width > 0, rect.height > 0 else { return nil }
+
+        let outputScale = retinaScale
+            ? max(1, intersecting.map { max($0.scaleX, $0.scaleY) }.max() ?? 1)
+            : 1
+        let outputWidth = max(1, Int((rect.width * outputScale).rounded(.up)))
+        let outputHeight = max(1, Int((rect.height * outputScale).rounded(.up)))
+
+        guard let context = CGContext(
+            data: nil,
+            width: outputWidth,
+            height: outputHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.interpolationQuality = .high
+        // Draw using top-left coordinates, matching CGImage.cropping(to:).
+        context.translateBy(x: 0, y: CGFloat(outputHeight))
+        context.scaleBy(x: 1, y: -1)
+
+        for display in intersecting {
+            let intersection = display.frame.intersection(rect)
+            guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else { continue }
+
+            let sourceRect = CGRect(
+                x: (intersection.minX - display.frame.minX) * display.scaleX,
+                y: (display.frame.maxY - intersection.maxY) * display.scaleY,
+                width: intersection.width * display.scaleX,
+                height: intersection.height * display.scaleY
+            ).integral
+            guard let cropped = display.image.cropping(to: sourceRect) else { continue }
+
+            let destinationRect = CGRect(
+                x: (intersection.minX - rect.minX) * outputScale,
+                y: (rect.maxY - intersection.maxY) * outputScale,
+                width: intersection.width * outputScale,
+                height: intersection.height * outputScale
+            ).integral
+            context.draw(cropped, in: destinationRect)
+        }
+
+        return context.makeImage()
+    }
+}
+
 final class AreaSelectorWindowController {
     private var overlayWindows: [NSWindow] = []
     private var overlayViews: [AreaSelectorOverlayView] = []
@@ -10,14 +76,18 @@ final class AreaSelectorWindowController {
     private var didFinish = false
     private var selectionStartInScreen: NSPoint?
     private var selectionCurrentInScreen: NSPoint?
-    private let completion: (CGRect?) -> Void
+    private let completion: (AreaSelectionResult?) -> Void
+    private var frozenSnapshot: FrozenScreenSnapshot?
+    private var retinaScale = true
 
-    init(completion: @escaping (CGRect?) -> Void) {
+    init(completion: @escaping (AreaSelectionResult?) -> Void) {
         self.completion = completion
     }
 
-    func show(freezeScreen: Bool, showMagnifier: Bool = false) {
+    func show(freezeScreen: Bool, showMagnifier: Bool = false, retinaScale: Bool = true) {
         didFinish = false
+        self.retinaScale = retinaScale
+        frozenSnapshot = freezeScreen ? captureSnapshot() : nil
         installKeyMonitor()
         // Delay activation until the current event cycle finishes (for menu-triggered captures).
         DispatchQueue.main.async { [weak self] in
@@ -44,7 +114,7 @@ final class AreaSelectorWindowController {
 
             let overlayView = AreaSelectorOverlayView(frame: NSRect(origin: .zero, size: screen.frame.size))
             overlayView.showsMagnifier = showMagnifier
-            overlayView.frozenImage = freezeScreen ? captureImage(for: screen) : nil
+            overlayView.frozenImage = frozenSnapshot?.displays.first(where: { $0.frame == screen.frame })?.image
             let overlayID = ObjectIdentifier(overlayView)
             overlayScreenFrames[overlayID] = screen.frame
             overlayScreenScales[overlayID] = max(1.0, screen.backingScaleFactor)
@@ -77,6 +147,7 @@ final class AreaSelectorWindowController {
         overlayScreenScales.removeAll()
         selectionStartInScreen = nil
         selectionCurrentInScreen = nil
+        frozenSnapshot = nil
     }
 
     private func installKeyMonitor() {
@@ -137,7 +208,8 @@ final class AreaSelectorWindowController {
             clearSelectionAcrossOverlays()
 
             if selectedRect.width > 5, selectedRect.height > 5 {
-                finish(with: selectedRect)
+                let frozenImage = frozenSnapshot?.image(for: selectedRect, retinaScale: retinaScale)
+                finish(with: AreaSelectionResult(rect: selectedRect, frozenImage: frozenImage))
             }
             return true
         case .mouseMoved:
@@ -214,7 +286,7 @@ final class AreaSelectorWindowController {
         )
     }
 
-    private func finish(with result: CGRect?) {
+    private func finish(with result: AreaSelectionResult?) {
         guard !didFinish else { return }
         didFinish = true
         // Avoid tearing down windows while AppKit is still dispatching the current mouse/key event.
@@ -225,11 +297,15 @@ final class AreaSelectorWindowController {
         }
     }
 
-    private func captureImage(for screen: NSScreen) -> CGImage? {
-        guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-            return nil
+    private func captureSnapshot() -> FrozenScreenSnapshot? {
+        let displays = NSScreen.screens.compactMap { screen -> FrozenScreenSnapshot.Display? in
+            guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+                  let image = CGDisplayCreateImage(displayID) else {
+                return nil
+            }
+            return FrozenScreenSnapshot.Display(frame: screen.frame, image: image)
         }
-        return CGDisplayCreateImage(displayID)
+        return displays.isEmpty ? nil : FrozenScreenSnapshot(displays: displays)
     }
 }
 

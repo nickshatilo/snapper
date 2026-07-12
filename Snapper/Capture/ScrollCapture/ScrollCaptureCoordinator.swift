@@ -30,11 +30,11 @@ final class ScrollCaptureCoordinator {
     func start(options: CaptureOptions) {
         stopRequested.reset()
         areaSelectorController?.close()
-        areaSelectorController = AreaSelectorWindowController { [weak self] rect in
+        areaSelectorController = AreaSelectorWindowController { [weak self] selection in
             guard let self else { return }
             self.areaSelectorController = nil
 
-            guard let rect else {
+            guard let rect = selection?.rect else {
                 Task { @MainActor in
                     self.onSessionEnd()
                 }

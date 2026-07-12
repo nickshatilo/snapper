@@ -135,21 +135,27 @@ final class CaptureCoordinator {
     private func captureArea(options: CaptureOptions) {
         areaSelectorController?.close()
         areaSelectorController = nil
-        areaSelectorController = AreaSelectorWindowController { [weak self] rect in
+        areaSelectorController = AreaSelectorWindowController { [weak self] selection in
             guard let self else { return }
             self.areaSelectorController = nil
 
-            guard let rect else {
+            guard let selection else {
                 self.appState.isCapturing = false
                 return
             }
+            let rect = selection.rect
 
             Task {
                 do {
-                    let image = try await self.captureService.captureRect(
-                        CoordinateSpace.appKitToCG(rect),
-                        retinaScale: options.retina2x
-                    )
+                    let image: CGImage
+                    if let frozenImage = selection.frozenImage {
+                        image = frozenImage
+                    } else {
+                        image = try await self.captureService.captureRect(
+                            CoordinateSpace.appKitToCG(rect),
+                            retinaScale: options.retina2x
+                        )
+                    }
                     let result = CaptureResult(
                         image: image,
                         mode: .area,
@@ -165,7 +171,11 @@ final class CaptureCoordinator {
                 }
             }
         }
-        areaSelectorController?.show(freezeScreen: options.freezeScreen, showMagnifier: options.showMagnifier)
+        areaSelectorController?.show(
+            freezeScreen: options.freezeScreen,
+            showMagnifier: options.showMagnifier,
+            retinaScale: options.retina2x
+        )
     }
 
     private func captureWindow(options: CaptureOptions) {

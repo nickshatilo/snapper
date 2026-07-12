@@ -32,6 +32,68 @@ final class BugFixTests: XCTestCase {
         )
     }
 
+    // MARK: - Frozen area capture
+
+    func testFrozenSnapshotCropsTheFrameCapturedAtSelectionStart() throws {
+        let displayImage = makeTwoBandImage(
+            width: 8,
+            height: 8,
+            top: (255, 0, 0),
+            bottom: (0, 0, 255)
+        )
+        let snapshot = FrozenScreenSnapshot(displays: [
+            .init(frame: CGRect(x: 0, y: 0, width: 4, height: 4), image: displayImage),
+        ])
+
+        let topHalf = try XCTUnwrap(snapshot.image(
+            for: CGRect(x: 0, y: 2, width: 4, height: 2),
+            retinaScale: true
+        ))
+        XCTAssertEqual(topHalf.width, 8)
+        XCTAssertEqual(topHalf.height, 4)
+        XCTAssertEqual(pixel(in: topHalf, x: 4, y: 2).red, 255)
+        XCTAssertEqual(pixel(in: topHalf, x: 4, y: 2).blue, 0)
+
+        let bottomHalf = try XCTUnwrap(snapshot.image(
+            for: CGRect(x: 0, y: 0, width: 4, height: 2),
+            retinaScale: true
+        ))
+        XCTAssertEqual(pixel(in: bottomHalf, x: 4, y: 2).red, 0)
+        XCTAssertEqual(pixel(in: bottomHalf, x: 4, y: 2).blue, 255)
+    }
+
+    func testFrozenSnapshotComposesSelectionsAcrossDisplays() throws {
+        let snapshot = FrozenScreenSnapshot(displays: [
+            .init(
+                frame: CGRect(x: 0, y: 0, width: 4, height: 4),
+                image: makeSolidImage(width: 8, height: 8, red: 255, green: 0, blue: 0)
+            ),
+            .init(
+                frame: CGRect(x: 4, y: 0, width: 4, height: 4),
+                image: makeSolidImage(width: 8, height: 8, red: 0, green: 255, blue: 0)
+            ),
+        ])
+
+        let image = try XCTUnwrap(snapshot.image(
+            for: CGRect(x: 2, y: 1, width: 4, height: 2),
+            retinaScale: false
+        ))
+        XCTAssertEqual(image.width, 4)
+        XCTAssertEqual(image.height, 2)
+        XCTAssertEqual(pixel(in: image, x: 0, y: 1).red, 255)
+        XCTAssertEqual(pixel(in: image, x: 3, y: 1).green, 255)
+    }
+
+    func testFreezeScreenDefaultsOnButRespectsAnExplicitPreference() {
+        let suiteName = "BugFixTests.freezeScreen.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(AppState(defaults: defaults).freezeScreen)
+        defaults.set(false, forKey: Constants.Keys.freezeScreen)
+        XCTAssertFalse(AppState(defaults: defaults).freezeScreen)
+    }
+
     // MARK: - Filename collisions
 
     func testUniqueURLAppendsCounterOnCollision() throws {

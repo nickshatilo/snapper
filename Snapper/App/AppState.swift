@@ -135,7 +135,7 @@ final class AppState {
         self.filenamePattern = defaults.string(forKey: Constants.Keys.filenamePattern) ?? Constants.Defaults.filenamePattern
         self.showCrosshair = defaults.object(forKey: Constants.Keys.showCrosshair) as? Bool ?? true
         self.showMagnifier = defaults.object(forKey: Constants.Keys.showMagnifier) as? Bool ?? false
-        self.freezeScreen = defaults.bool(forKey: Constants.Keys.freezeScreen)
+        self.freezeScreen = defaults.object(forKey: Constants.Keys.freezeScreen) as? Bool ?? true
         self.retina2x = defaults.object(forKey: Constants.Keys.retina2x) as? Bool ?? true
         self.windowCaptureIncludeShadow = defaults.object(forKey: Constants.Keys.windowCaptureIncludeShadow) as? Bool ?? true
 
