@@ -59,7 +59,11 @@ struct CaptureThumbnailView: View {
         HStack(spacing: 4) {
             OverlayIconButton(icon: "doc.on.doc", tooltip: "Copy") {
                 if let image = capture.resolvedImage() {
-                    PasteboardHelper.copyImage(image, scale: capture.scale)
+                    PasteboardHelper.copyImage(
+                        image,
+                        scale: capture.scale,
+                        showsConfirmation: true
+                    )
                 }
             }
             OverlayIconButton(icon: "square.and.arrow.down", tooltip: "Reveal File") {

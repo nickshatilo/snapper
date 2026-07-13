@@ -90,11 +90,11 @@ final class PinnedScreenshotPanel: NSPanel {
     }
 
     @objc private func copyImage() {
-        if let imageView = contentView as? NSImageView, let image = imageView.image {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.writeObjects([image])
-        }
+        PasteboardHelper.copyImage(
+            sourceImage,
+            scale: sourceScale,
+            showsConfirmation: true
+        )
     }
 
     @objc private func saveImage() {

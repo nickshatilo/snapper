@@ -3,9 +3,6 @@ import SwiftUI
 struct AnnotationEditorView: View {
     @State var canvasState: CanvasState
     @State var toolManager: ToolManager
-    @State private var isCopyConfirmationVisible = false
-    @State private var copyConfirmationTask: Task<Void, Never>?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,11 +46,7 @@ struct AnnotationEditorView: View {
 
                 // Canvas
                 ZStack {
-                    CanvasView(
-                        canvasState: canvasState,
-                        toolManager: toolManager,
-                        onCopySucceeded: showCopyConfirmation
-                    )
+                    CanvasView(canvasState: canvasState, toolManager: toolManager)
                 }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .windowBackgroundColor))
@@ -70,27 +63,6 @@ struct AnnotationEditorView: View {
         .focusable()
         .onKeyPress { keyPress in
             handleKeyPress(keyPress)
-        }
-        .overlay {
-            if isCopyConfirmationVisible {
-                Label("Copied", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay {
-                        Capsule()
-                            .strokeBorder(.white.opacity(0.16), lineWidth: 1)
-                    }
-                    .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
-                    .transition(copyConfirmationTransition)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-        }
-        .onDisappear {
-            copyConfirmationTask?.cancel()
         }
     }
 
@@ -219,44 +191,8 @@ struct AnnotationEditorView: View {
     }
 
     private func exportToClipboard() {
-        guard let image = canvasState.renderFinalImage(),
-              PasteboardHelper.copyImage(image) else { return }
-        showCopyConfirmation()
-    }
-
-    private var copyConfirmationTransition: AnyTransition {
-        reduceMotion
-            ? .opacity
-            : .scale(scale: 0.84).combined(with: .opacity)
-    }
-
-    private func showCopyConfirmation() {
-        copyConfirmationTask?.cancel()
-
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            isCopyConfirmationVisible = false
-        }
-
-        copyConfirmationTask = Task { @MainActor in
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-
-            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.72)) {
-                isCopyConfirmationVisible = true
-            }
-
-            do {
-                try await Task.sleep(for: .milliseconds(1_100))
-            } catch {
-                return
-            }
-
-            withAnimation(.easeOut(duration: 0.18)) {
-                isCopyConfirmationVisible = false
-            }
-        }
+        guard let image = canvasState.renderFinalImage() else { return }
+        PasteboardHelper.copyImage(image, showsConfirmation: true)
     }
 
     private func exportSave() {
