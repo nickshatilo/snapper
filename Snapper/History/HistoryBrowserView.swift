@@ -181,7 +181,11 @@ struct HistoryBrowserView: View {
             .disabled(record.filePath.isEmpty)
             Button("Copy") {
                 if let image = NSImage(contentsOfFile: record.filePath) {
-                    PasteboardHelper.copyImage(image, showsConfirmation: true)
+                    PasteboardHelper.copyImage(
+                        image,
+                        showsConfirmation: true,
+                        confirmationScreen: NSApp.keyWindow?.screen
+                    )
                 }
             }
             .disabled(record.filePath.isEmpty)

@@ -62,7 +62,8 @@ struct CaptureThumbnailView: View {
                     PasteboardHelper.copyImage(
                         image,
                         scale: capture.scale,
-                        showsConfirmation: true
+                        showsConfirmation: true,
+                        confirmationScreen: manager.screen
                     )
                 }
             }

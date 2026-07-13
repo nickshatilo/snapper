@@ -9,7 +9,8 @@ enum PasteboardHelper {
     static func copyImage(
         _ image: CGImage,
         scale: CGFloat = 1,
-        showsConfirmation: Bool = false
+        showsConfirmation: Bool = false,
+        confirmationScreen: NSScreen? = nil
     ) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -34,44 +35,64 @@ enum PasteboardHelper {
         }
         return finishCopy(
             pasteboard.writeObjects([item]),
-            showsConfirmation: showsConfirmation
+            showsConfirmation: showsConfirmation,
+            confirmationScreen: confirmationScreen
         )
     }
 
     @discardableResult
-    static func copyImage(_ image: NSImage, showsConfirmation: Bool = false) -> Bool {
+    static func copyImage(
+        _ image: NSImage,
+        showsConfirmation: Bool = false,
+        confirmationScreen: NSScreen? = nil
+    ) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         return finishCopy(
             pasteboard.writeObjects([image]),
-            showsConfirmation: showsConfirmation
+            showsConfirmation: showsConfirmation,
+            confirmationScreen: confirmationScreen
         )
     }
 
     @discardableResult
-    static func copyText(_ text: String, showsConfirmation: Bool = false) -> Bool {
+    static func copyText(
+        _ text: String,
+        showsConfirmation: Bool = false,
+        confirmationScreen: NSScreen? = nil
+    ) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         return finishCopy(
             pasteboard.setString(text, forType: .string),
-            showsConfirmation: showsConfirmation
+            showsConfirmation: showsConfirmation,
+            confirmationScreen: confirmationScreen
         )
     }
 
     @discardableResult
-    static func copyFile(at url: URL, showsConfirmation: Bool = false) -> Bool {
+    static func copyFile(
+        at url: URL,
+        showsConfirmation: Bool = false,
+        confirmationScreen: NSScreen? = nil
+    ) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         return finishCopy(
             pasteboard.writeObjects([url as NSURL]),
-            showsConfirmation: showsConfirmation
+            showsConfirmation: showsConfirmation,
+            confirmationScreen: confirmationScreen
         )
     }
 
-    private static func finishCopy(_ succeeded: Bool, showsConfirmation: Bool) -> Bool {
+    private static func finishCopy(
+        _ succeeded: Bool,
+        showsConfirmation: Bool,
+        confirmationScreen: NSScreen?
+    ) -> Bool {
         guard succeeded, showsConfirmation else { return succeeded }
         Task { @MainActor in
-            CopyConfirmationHUD.shared.show()
+            CopyConfirmationHUD.shared.show(on: confirmationScreen)
         }
         return true
     }
@@ -84,7 +105,7 @@ private final class CopyConfirmationHUD {
     private var panel: NSPanel?
     private var dismissalTask: Task<Void, Never>?
 
-    func show() {
+    func show(on sourceScreen: NSScreen?) {
         dismissalTask?.cancel()
 
         let panel = panel ?? makePanel()
@@ -93,7 +114,7 @@ private final class CopyConfirmationHUD {
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
-        position(panel)
+        position(panel, on: sourceScreen)
         panel.orderFrontRegardless()
 
         dismissalTask = Task { @MainActor in
@@ -126,9 +147,10 @@ private final class CopyConfirmationHUD {
         return panel
     }
 
-    private func position(_ panel: NSPanel) {
+    private func position(_ panel: NSPanel, on sourceScreen: NSScreen?) {
         let mouseLocation = NSEvent.mouseLocation
-        let screen = NSApp.keyWindow?.screen
+        let screen = sourceScreen
+            ?? NSApp.keyWindow?.screen
             ?? NSScreen.screens.first { $0.frame.contains(mouseLocation) }
             ?? NSScreen.main
         guard let visibleFrame = screen?.visibleFrame else { return }

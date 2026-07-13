@@ -93,7 +93,8 @@ final class PinnedScreenshotPanel: NSPanel {
         PasteboardHelper.copyImage(
             sourceImage,
             scale: sourceScale,
-            showsConfirmation: true
+            showsConfirmation: true,
+            confirmationScreen: screen
         )
     }
 

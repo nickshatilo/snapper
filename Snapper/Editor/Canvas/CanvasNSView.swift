@@ -1933,7 +1933,11 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     private func copySelectedTextToPasteboard() -> Bool {
         let text = selectedText()
         guard !text.isEmpty else { return false }
-        return PasteboardHelper.copyText(text, showsConfirmation: true)
+        return PasteboardHelper.copyText(
+            text,
+            showsConfirmation: true,
+            confirmationScreen: window?.screen
+        )
     }
 
     private func selectedText() -> String {
