@@ -128,8 +128,8 @@ private final class CopyConfirmationHUD {
 
     private func position(_ panel: NSPanel) {
         let mouseLocation = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) }
-            ?? NSApp.keyWindow?.screen
+        let screen = NSApp.keyWindow?.screen
+            ?? NSScreen.screens.first { $0.frame.contains(mouseLocation) }
             ?? NSScreen.main
         guard let visibleFrame = screen?.visibleFrame else { return }
 
