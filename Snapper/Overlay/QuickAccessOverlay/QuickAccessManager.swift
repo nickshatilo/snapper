@@ -5,6 +5,7 @@ import SwiftUI
 @Observable
 final class QuickAccessManager {
     var captures: [QuickAccessCapture] = []
+    var screen: NSScreen? { panel?.screen }
     private var panel: QuickAccessPanel?
     private let appState: AppState
     @ObservationIgnored private var observerTokens: [NSObjectProtocol] = []

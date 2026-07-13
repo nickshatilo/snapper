@@ -191,9 +191,12 @@ struct AnnotationEditorView: View {
     }
 
     private func exportToClipboard() {
-        if let image = canvasState.renderFinalImage() {
-            PasteboardHelper.copyImage(image)
-        }
+        guard let image = canvasState.renderFinalImage() else { return }
+        PasteboardHelper.copyImage(
+            image,
+            showsConfirmation: true,
+            confirmationScreen: NSApp.keyWindow?.screen
+        )
     }
 
     private func exportSave() {

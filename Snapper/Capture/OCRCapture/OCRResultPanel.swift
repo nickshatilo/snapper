@@ -46,7 +46,11 @@ struct OCRResultView: View {
                 Spacer()
 
                 Button("Copy") {
-                    PasteboardHelper.copyText(text)
+                    PasteboardHelper.copyText(
+                        text,
+                        showsConfirmation: true,
+                        confirmationScreen: NSApp.keyWindow?.screen
+                    )
                 }
                 .buttonStyle(.borderedProminent)
 
