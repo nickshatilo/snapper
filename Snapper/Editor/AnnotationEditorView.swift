@@ -49,7 +49,11 @@ struct AnnotationEditorView: View {
 
                 // Canvas
                 ZStack {
-                    CanvasView(canvasState: canvasState, toolManager: toolManager)
+                    CanvasView(
+                        canvasState: canvasState,
+                        toolManager: toolManager,
+                        onCopySucceeded: showCopyConfirmation
+                    )
                 }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .windowBackgroundColor))

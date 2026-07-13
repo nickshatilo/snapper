@@ -3,6 +3,7 @@ import AppKit
 final class CanvasNSView: NSView, NSTextFieldDelegate {
     var canvasState: CanvasState
     var toolManager: ToolManager
+    var onCopySucceeded: () -> Void
 
     private var trackingArea: NSTrackingArea?
     private var isDragging = false
@@ -91,9 +92,14 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     private static let selectedHighlightGradient = makeHighlightGradient(topAlpha: 0.08, bottomAlpha: 0.28)
     private static let previewHighlightGradient = makeHighlightGradient(topAlpha: 0.05, bottomAlpha: 0.17)
 
-    init(canvasState: CanvasState, toolManager: ToolManager) {
+    init(
+        canvasState: CanvasState,
+        toolManager: ToolManager,
+        onCopySucceeded: @escaping () -> Void = {}
+    ) {
         self.canvasState = canvasState
         self.toolManager = toolManager
+        self.onCopySucceeded = onCopySucceeded
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
@@ -1933,7 +1939,8 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     private func copySelectedTextToPasteboard() -> Bool {
         let text = selectedText()
         guard !text.isEmpty else { return false }
-        PasteboardHelper.copyText(text)
+        guard PasteboardHelper.copyText(text) else { return false }
+        onCopySucceeded()
         return true
     }
 
