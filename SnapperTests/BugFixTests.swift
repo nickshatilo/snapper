@@ -62,6 +62,28 @@ final class BugFixTests: XCTestCase {
         XCTAssertEqual(pixel(in: bottomHalf, x: 4, y: 2).blue, 255)
     }
 
+    func testFrozenSnapshotPreservesVerticalOrientation() throws {
+        let displayImage = makeTwoBandImage(
+            width: 4,
+            height: 4,
+            top: (255, 0, 0),
+            bottom: (0, 0, 255)
+        )
+        let snapshot = FrozenScreenSnapshot(displays: [
+            .init(frame: CGRect(x: 0, y: 0, width: 4, height: 4), image: displayImage),
+        ])
+
+        let image = try XCTUnwrap(snapshot.image(
+            for: CGRect(x: 0, y: 0, width: 4, height: 4),
+            retinaScale: false
+        ))
+
+        XCTAssertEqual(rawPixel(in: image, x: 2, y: 0).red, 255)
+        XCTAssertEqual(rawPixel(in: image, x: 2, y: 0).blue, 0)
+        XCTAssertEqual(rawPixel(in: image, x: 2, y: 3).red, 0)
+        XCTAssertEqual(rawPixel(in: image, x: 2, y: 3).blue, 255)
+    }
+
     func testFrozenSnapshotComposesSelectionsAcrossDisplays() throws {
         let snapshot = FrozenScreenSnapshot(displays: [
             .init(
@@ -82,6 +104,27 @@ final class BugFixTests: XCTestCase {
         XCTAssertEqual(image.height, 2)
         XCTAssertEqual(pixel(in: image, x: 0, y: 1).red, 255)
         XCTAssertEqual(pixel(in: image, x: 3, y: 1).green, 255)
+    }
+
+    func testFrozenSnapshotComposesVerticallyArrangedDisplaysUpright() throws {
+        let snapshot = FrozenScreenSnapshot(displays: [
+            .init(
+                frame: CGRect(x: 0, y: 0, width: 4, height: 4),
+                image: makeSolidImage(width: 4, height: 4, red: 255, green: 0, blue: 0)
+            ),
+            .init(
+                frame: CGRect(x: 0, y: 4, width: 4, height: 4),
+                image: makeSolidImage(width: 4, height: 4, red: 0, green: 255, blue: 0)
+            ),
+        ])
+
+        let image = try XCTUnwrap(snapshot.image(
+            for: CGRect(x: 0, y: 2, width: 4, height: 4),
+            retinaScale: false
+        ))
+
+        XCTAssertEqual(rawPixel(in: image, x: 2, y: 0).green, 255)
+        XCTAssertEqual(rawPixel(in: image, x: 2, y: 3).red, 255)
     }
 
     func testFreezeScreenDefaultsOnButRespectsAnExplicitPreference() {
@@ -268,6 +311,13 @@ final class BugFixTests: XCTestCase {
         )!
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         let index = (y * image.width + x) * 4
+        return (data[index], data[index + 1], data[index + 2])
+    }
+
+    private func rawPixel(in image: CGImage, x: Int, y: Int) -> (red: UInt8, green: UInt8, blue: UInt8) {
+        let data = image.dataProvider?.data as Data?
+        guard let data else { return (0, 0, 0) }
+        let index = y * image.bytesPerRow + x * 4
         return (data[index], data[index + 1], data[index + 2])
     }
 }

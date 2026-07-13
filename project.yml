@@ -7,15 +7,15 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.5.0"
-    CURRENT_PROJECT_VERSION: "5"
+    MARKETING_VERSION: "1.6.0"
+    CURRENT_PROJECT_VERSION: "6"
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    from: "2.6.0"
+    exactVersion: "2.9.4"
 
 targets:
   Snapper:

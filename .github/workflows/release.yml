@@ -21,27 +21,45 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            TAG="v$(echo "$VERSION" | awk -F. '{print $1 "." $2}')"
-          else
-            VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION: "\(.*\)"/\1/p' project.yml | head -n1)"
-            TAG="$GITHUB_REF_NAME"
-          fi
-
-          if [ -z "$VERSION" ]; then
+          PROJECT_VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION: "\(.*\)"/\1/p' project.yml | head -n1)"
+          if [ -z "$PROJECT_VERSION" ]; then
             echo "Failed to determine MARKETING_VERSION" >&2
             exit 1
           fi
 
-          EXPECTED_TAG="v$(echo "$VERSION" | awk -F. '{print $1 "." $2}')"
-          if [ "$TAG" != "$EXPECTED_TAG" ]; then
-            echo "Tag $TAG does not match project version $VERSION (expected $EXPECTED_TAG)" >&2
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="$PROJECT_VERSION"
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must use major.minor.patch format: $VERSION" >&2
+            exit 1
+          fi
+
+          if [ "$VERSION" != "$PROJECT_VERSION" ]; then
+            echo "Requested version $VERSION does not match project version $PROJECT_VERSION" >&2
+            exit 1
+          fi
+
+          TAG="v$VERSION"
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match project version $VERSION (expected $TAG)" >&2
             exit 1
           fi
 
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "TAG=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Require Sparkle signing key
+        env:
+          HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAS_SPARKLE_KEY" != "true" ]; then
+            echo "SPARKLE_PRIVATE_KEY is required; refusing to publish unsigned updates." >&2
+            exit 1
+          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -184,6 +202,8 @@ jobs:
         run: |
           APP_PATH="$RUNNER_TEMP/build/Build/Products/Release/Snapper.app"
           VERSION="${{ steps.version.outputs.VERSION }}"
+          DIST_DIR="$GITHUB_WORKSPACE/dist/$VERSION"
+          mkdir -p "$DIST_DIR"
 
           # Create a staging folder with the app and Applications symlink
           STAGING="$RUNNER_TEMP/dmg-staging"
@@ -195,21 +215,123 @@ jobs:
             -volname "Snapper $VERSION" \
             -srcfolder "$STAGING" \
             -ov -format UDZO \
-            "Snapper-${VERSION}.dmg"
+            "$DIST_DIR/Snapper-${VERSION}.dmg"
 
       - name: Create zip
         run: |
           APP_PATH="$RUNNER_TEMP/build/Build/Products/Release/Snapper.app"
           VERSION="${{ steps.version.outputs.VERSION }}"
-          ditto -c -k --keepParent "$APP_PATH" "Snapper-${VERSION}.zip"
+          DIST_DIR="$GITHUB_WORKSPACE/dist/$VERSION"
+          mkdir -p "$DIST_DIR"
+          ditto -c -k --keepParent "$APP_PATH" "$DIST_DIR/Snapper-${VERSION}.zip"
 
-      - name: Create GitHub Release
+      - name: Create stable DMG alias
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          cp "dist/$VERSION/Snapper-$VERSION.dmg" "dist/$VERSION/Snapper-latest.dmg"
+
+      - name: Verify local release artifacts
+        run: scripts/verify-release-artifacts.sh "${{ steps.version.outputs.VERSION }}" "dist/${{ steps.version.outputs.VERSION }}"
+
+      - name: Generate signed appcast and release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TAG="${{ steps.version.outputs.TAG }}"
+          DIST_DIR="$GITHUB_WORKSPACE/dist/$VERSION"
+          UPDATES_DIR="$RUNNER_TEMP/updates"
+          mkdir -p "$UPDATES_DIR"
+          cp "$DIST_DIR/Snapper-${VERSION}.zip" "$UPDATES_DIR/"
+
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$GITHUB_SHA" \
+            --jq .body > "$UPDATES_DIR/Snapper-${VERSION}.md"
+
+          GENERATE_APPCAST="$(find "$RUNNER_TEMP/spm/artifacts" -type f -name generate_appcast -perm -111 | head -n1)"
+          if [ -z "$GENERATE_APPCAST" ]; then
+            echo "Could not find Sparkle's generate_appcast tool" >&2
+            exit 1
+          fi
+
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/" \
+            --embed-release-notes \
+            --maximum-deltas 0 \
+            --link https://snapper.tools \
+            -o "$GITHUB_WORKSPACE/appcast.xml" \
+            "$UPDATES_DIR"
+
+          cp "$UPDATES_DIR/Snapper-${VERSION}.md" release-notes.md
+          xmllint --noout appcast.xml
+          grep -q 'sparkle-signatures:' appcast.xml
+          grep -q 'sparkle:edSignature=' appcast.xml
+          grep -q "Snapper-${VERSION}.zip" appcast.xml
+          cp appcast.xml "$DIST_DIR/appcast.xml"
+
+      - name: Create checksums
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          cd "dist/$VERSION"
+          shasum -a 256 \
+            "Snapper-$VERSION.dmg" \
+            "Snapper-$VERSION.zip" \
+            Snapper-latest.dmg \
+            appcast.xml > SHA256SUMS
+
+      - name: Create draft GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.TAG }}
           name: Snapper ${{ steps.version.outputs.VERSION }}
+          body_path: release-notes.md
           files: |
-            Snapper-*.dmg
-            Snapper-*.zip
-          generate_release_notes: true
-          draft: false
+            dist/${{ steps.version.outputs.VERSION }}/Snapper-${{ steps.version.outputs.VERSION }}.dmg
+            dist/${{ steps.version.outputs.VERSION }}/Snapper-${{ steps.version.outputs.VERSION }}.zip
+            dist/${{ steps.version.outputs.VERSION }}/Snapper-latest.dmg
+            dist/${{ steps.version.outputs.VERSION }}/appcast.xml
+            dist/${{ steps.version.outputs.VERSION }}/SHA256SUMS
+          fail_on_unmatched_files: true
+          draft: true
+          prerelease: false
+
+      - name: Verify uploaded draft artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERIFY_DIR="$RUNNER_TEMP/uploaded-release"
+          mkdir -p "$VERIFY_DIR"
+          gh release download "${{ steps.version.outputs.TAG }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$VERIFY_DIR"
+          (cd "$VERIFY_DIR" && shasum -a 256 -c SHA256SUMS)
+          scripts/verify-release-artifacts.sh "${{ steps.version.outputs.VERSION }}" "$VERIFY_DIR"
+          xmllint --noout "$VERIFY_DIR/appcast.xml"
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ steps.version.outputs.TAG }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
+
+      - name: Verify public update endpoints
+        run: |
+          set -euo pipefail
+          PUBLIC_DIR="$RUNNER_TEMP/public-release"
+          mkdir -p "$PUBLIC_DIR"
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/latest/download"
+          for artifact in appcast.xml Snapper-latest.dmg SHA256SUMS; do
+            curl --fail --location --retry 5 --retry-all-errors \
+              "$BASE/$artifact" -o "$PUBLIC_DIR/$artifact"
+          done
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          cmp "dist/$VERSION/appcast.xml" "$PUBLIC_DIR/appcast.xml"
+          cmp "dist/$VERSION/Snapper-latest.dmg" "$PUBLIC_DIR/Snapper-latest.dmg"

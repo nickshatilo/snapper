@@ -30,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard ensureSingleInstance() else { return }
         ProcessInfo.processInfo.disableAutomaticTermination("Snapper should stay alive as a menu bar utility.")
 
+        // Updates
+        updateManager = UpdateManager()
+
         // Core services
         menuBarController = MenuBarController(appState: appState)
         hotkeyManager = HotkeyManager(appState: appState)
@@ -59,9 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ocrCaptureController = OCRCaptureController()
         timerCaptureController = TimerCaptureController()
         allInOneHUDPanel = AllInOneHUDPanel()
-
-        // Updates
-        updateManager = UpdateManager()
 
         // History & editor notifications
         observeNotifications()
@@ -236,8 +236,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let existingWindow = settingsWindow {
             window = existingWindow
         } else {
+            guard let updateManager else { return }
             let content = SettingsView()
                 .environment(appState)
+                .environment(updateManager)
             let hostingController = NSHostingController(rootView: content)
 
             let newWindow = NSWindow(contentViewController: hostingController)

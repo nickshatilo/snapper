@@ -23,7 +23,6 @@ enum Constants {
         static let pinnedScreenshots = "pinnedScreenshots"
         static let windowCaptureIncludeShadow = "windowCaptureIncludeShadow"
         static let hideDesktopIcons = "hideDesktopIcons"
-        static let autoCheckUpdates = "autoCheckUpdates"
         static let hotkeyBindings = "hotkeyBindings"
     }
 

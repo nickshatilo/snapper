@@ -37,6 +37,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(UpdateManager.self) private var updateManager
     @State private var selectedTab: SettingsTab = .general
     @State private var storageSize: String = "Calculating..."
     @State private var showClearHistoryConfirmation = false
@@ -456,15 +457,33 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Check for Updates…") {
-                    NotificationCenter.default.post(name: .checkForUpdates, object: nil)
-                }
-                .buttonStyle(.borderedProminent)
+                Button("Check for Updates…", action: updateManager.checkForUpdates)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!updateManager.canCheckForUpdates)
             }
 
             Text("Open source macOS screenshot tool.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            ToggleRow(
+                title: "Automatically Check for Updates",
+                subtitle: "Periodically look for new signed Snapper releases.",
+                isOn: Binding(
+                    get: { updateManager.automaticallyChecksForUpdates },
+                    set: updateManager.setAutomaticallyChecksForUpdates
+                )
+            )
+
+            ToggleRow(
+                title: "Automatically Download Updates",
+                subtitle: "Download verified updates in the background and ask before relaunching.",
+                isOn: Binding(
+                    get: { updateManager.automaticallyDownloadsUpdates },
+                    set: updateManager.setAutomaticallyDownloadsUpdates
+                )
+            )
+            .disabled(!updateManager.allowsAutomaticUpdates)
         }
     }
 

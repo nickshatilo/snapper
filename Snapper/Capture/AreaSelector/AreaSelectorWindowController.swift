@@ -37,9 +37,6 @@ struct FrozenScreenSnapshot {
         ) else { return nil }
 
         context.interpolationQuality = .high
-        // Draw using top-left coordinates, matching CGImage.cropping(to:).
-        context.translateBy(x: 0, y: CGFloat(outputHeight))
-        context.scaleBy(x: 1, y: -1)
 
         for display in intersecting {
             let intersection = display.frame.intersection(rect)
@@ -55,7 +52,7 @@ struct FrozenScreenSnapshot {
 
             let destinationRect = CGRect(
                 x: (intersection.minX - rect.minX) * outputScale,
-                y: (rect.maxY - intersection.maxY) * outputScale,
+                y: (intersection.minY - rect.minY) * outputScale,
                 width: intersection.width * outputScale,
                 height: intersection.height * outputScale
             ).integral

@@ -7,9 +7,9 @@ Always use Apple identity signing. Never use ad-hoc signing. All builds must be 
 - Version is defined in `project.yml`
 - Release artifacts go in `dist/{version}/` — DMG and ZIP
 - GitHub releases at https://github.com/nickshatilo/snapper/releases
-- Tag format: `v{major}.{minor}` (e.g. `v1.1`)
+- Tag format: `v{major}.{minor}.{patch}` (e.g. `v1.5.0`)
 - DMG naming: `Snapper-{version}.dmg` (e.g. `Snapper-1.1.0.dmg`)
-- **Website**: After a release, update `downloadUrl` in `website/src/pages/index.astro` to point to the new DMG
+- **Website**: `downloadUrl` in `website/src/pages/index.astro` uses the stable `Snapper-latest.dmg` release asset; every release must publish that alias alongside the versioned DMG
 
 ## Website
 

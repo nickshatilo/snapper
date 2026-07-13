@@ -4,6 +4,17 @@ import AppKit
 @testable import Snapper
 
 final class SnapperTests: XCTestCase {
+    func testSparkleUpdateConfigurationUsesSignedFeedAndPreExtractionVerification() {
+        let info = Bundle.main.infoDictionary
+        XCTAssertEqual(
+            info?["SUFeedURL"] as? String,
+            "https://github.com/nickshatilo/snapper/releases/latest/download/appcast.xml"
+        )
+        XCTAssertEqual(info?["SUPublicEDKey"] as? String, "Qb9fgnFpJCPKj0TZ4kOZrkTwSLBIhTRBFr+4X1Lc490=")
+        XCTAssertEqual(info?["SURequireSignedFeed"] as? Bool, true)
+        XCTAssertEqual(info?["SUVerifyUpdateBeforeExtraction"] as? Bool, true)
+    }
+
     func testCaptureModeCases() {
         XCTAssertEqual(CaptureMode.allCases.count, 6)
         XCTAssertEqual(CaptureMode.fullscreen.displayName, "Fullscreen")

@@ -46,6 +46,10 @@ Open-source screenshot tool for macOS. Aims for local feature parity with CleanS
 - Auto-updates via Sparkle
 - Launch at login
 
+Updates are delivered in-app through Sparkle. Snapper verifies both the signed
+appcast and update archive before installing, while macOS independently verifies
+the Developer ID signature and notarization.
+
 ## Install
 
 ### Download
