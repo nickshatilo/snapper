@@ -28,7 +28,9 @@ verify_app() {
   fi
 
   codesign --verify --deep --strict --verbose=2 "$app"
-  codesign -dv --verbose=4 "$app" 2>&1 | grep -q '^Authority=Developer ID Application:'
+  local signature_info
+  signature_info="$(codesign -dv --verbose=4 "$app" 2>&1)"
+  grep -q '^Authority=Developer ID Application:' <<< "$signature_info"
   spctl --assess --type execute --verbose=4 "$app"
   xcrun stapler validate "$app"
 
