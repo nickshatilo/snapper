@@ -4,7 +4,8 @@ enum PasteboardHelper {
     /// Copies the image as both TIFF and PNG. `scale` is the source display's
     /// backing scale; it sets the bitmap's point size so retina captures paste
     /// at their on-screen size instead of 2x.
-    static func copyImage(_ image: CGImage, scale: CGFloat = 1) {
+    @discardableResult
+    static func copyImage(_ image: CGImage, scale: CGFloat = 1) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
 
@@ -26,18 +27,20 @@ enum PasteboardHelper {
         if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
             item.setData(pngData, forType: .png)
         }
-        pasteboard.writeObjects([item])
+        return pasteboard.writeObjects([item])
     }
 
-    static func copyText(_ text: String) {
+    @discardableResult
+    static func copyText(_ text: String) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        return pasteboard.setString(text, forType: .string)
     }
 
-    static func copyFile(at url: URL) {
+    @discardableResult
+    static func copyFile(at url: URL) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.writeObjects([url as NSURL])
+        return pasteboard.writeObjects([url as NSURL])
     }
 }
