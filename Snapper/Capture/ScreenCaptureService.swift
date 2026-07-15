@@ -12,6 +12,12 @@ final class ScreenCaptureService {
         let scale: CGFloat
     }
 
+    struct DisplayCapture {
+        let frame: CGRect
+        let scale: CGFloat
+        let image: CGImage
+    }
+
     struct RectCaptureContext {
         let displayFrame: CGRect
         let displayScale: CGFloat
@@ -197,7 +203,7 @@ final class ScreenCaptureService {
             throw CaptureError.noDisplay
         }
 
-        var capturedDisplays: [(frame: CGRect, scale: CGFloat, image: CGImage)] = []
+        var capturedDisplays: [DisplayCapture] = []
         capturedDisplays.reserveCapacity(content.displays.count)
 
         for display in content.displays {
@@ -214,7 +220,19 @@ final class ScreenCaptureService {
                 contentFilter: filter,
                 configuration: config
             )
-            capturedDisplays.append((frame: frame, scale: scale, image: image))
+            capturedDisplays.append(DisplayCapture(frame: frame, scale: scale, image: image))
+        }
+
+        return try Self.composeDisplays(capturedDisplays)
+    }
+
+    /// Composes ScreenCaptureKit display images into one image whose pixel
+    /// coordinates use the same top-left convention as the display frames.
+    /// The bitmap context itself remains in native Quartz bottom-left space so
+    /// drawing a CGImage does not mirror its contents vertically.
+    static func composeDisplays(_ capturedDisplays: [DisplayCapture]) throws -> MultiDisplayCapture {
+        guard !capturedDisplays.isEmpty else {
+            throw CaptureError.noDisplay
         }
 
         let unionRect = capturedDisplays
@@ -222,7 +240,7 @@ final class ScreenCaptureService {
             .reduce(CGRect.null) { partial, frame in
                 partial.union(frame)
             }
-        let canvasScale = max(1.0, retinaScale ? capturedDisplays.map(\.scale).max() ?? 1.0 : 1.0)
+        let canvasScale = max(1.0, capturedDisplays.map(\.scale).max() ?? 1.0)
         let canvasWidth = max(1, Int((unionRect.width * canvasScale).rounded(.up)))
         let canvasHeight = max(1, Int((unionRect.height * canvasScale).rounded(.up)))
 
@@ -239,15 +257,14 @@ final class ScreenCaptureService {
         }
 
         context.interpolationQuality = .high
-        context.translateBy(x: 0, y: CGFloat(canvasHeight))
-        context.scaleBy(x: 1, y: -1)
 
         for captured in capturedDisplays {
-            // Placement must match the CG top-left convention used by `crop()`:
-            // the composed image's top row corresponds to `unionRect.minY`.
+            // Display frames use top-left global coordinates, while the bitmap
+            // context uses bottom-left coordinates. Convert only the placement;
+            // flipping the context would also mirror each captured image.
             let targetRect = CGRect(
                 x: (captured.frame.minX - unionRect.minX) * canvasScale,
-                y: (captured.frame.minY - unionRect.minY) * canvasScale,
+                y: (unionRect.maxY - captured.frame.maxY) * canvasScale,
                 width: captured.frame.width * canvasScale,
                 height: captured.frame.height * canvasScale
             ).integral

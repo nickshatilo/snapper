@@ -32,6 +32,66 @@ final class BugFixTests: XCTestCase {
         )
     }
 
+    // MARK: - Fullscreen capture composition
+
+    func testDisplayCompositionPreservesSingleDisplayOrientation() throws {
+        let displayImage = makeTwoBandImage(
+            width: 4,
+            height: 4,
+            top: (255, 0, 0),
+            bottom: (0, 0, 255)
+        )
+
+        let capture = try ScreenCaptureService.composeDisplays([
+            .init(frame: CGRect(x: 0, y: 0, width: 4, height: 4), scale: 1, image: displayImage),
+        ])
+
+        XCTAssertEqual(rawPixel(in: capture.image, x: 2, y: 0).red, 255)
+        XCTAssertEqual(rawPixel(in: capture.image, x: 2, y: 0).blue, 0)
+        XCTAssertEqual(rawPixel(in: capture.image, x: 2, y: 3).red, 0)
+        XCTAssertEqual(rawPixel(in: capture.image, x: 2, y: 3).blue, 255)
+    }
+
+    func testDisplayCompositionPlacesVerticalDisplaysWithoutMirroring() throws {
+        let topDisplay = makeTwoBandImage(
+            width: 4,
+            height: 4,
+            top: (255, 0, 0),
+            bottom: (0, 0, 255)
+        )
+        let bottomDisplay = makeTwoBandImage(
+            width: 4,
+            height: 4,
+            top: (0, 255, 0),
+            bottom: (255, 255, 0)
+        )
+
+        let capture = try ScreenCaptureService.composeDisplays([
+            .init(frame: CGRect(x: 0, y: 0, width: 4, height: 4), scale: 1, image: topDisplay),
+            .init(frame: CGRect(x: 0, y: 4, width: 4, height: 4), scale: 1, image: bottomDisplay),
+        ])
+
+        let topEdge = rawPixel(in: capture.image, x: 2, y: 0)
+        XCTAssertEqual(topEdge.red, 255)
+        XCTAssertEqual(topEdge.green, 0)
+        XCTAssertEqual(topEdge.blue, 0)
+
+        let topDisplayBottomEdge = rawPixel(in: capture.image, x: 2, y: 3)
+        XCTAssertEqual(topDisplayBottomEdge.red, 0)
+        XCTAssertEqual(topDisplayBottomEdge.green, 0)
+        XCTAssertEqual(topDisplayBottomEdge.blue, 255)
+
+        let bottomDisplayTopEdge = rawPixel(in: capture.image, x: 2, y: 4)
+        XCTAssertEqual(bottomDisplayTopEdge.red, 0)
+        XCTAssertEqual(bottomDisplayTopEdge.green, 255)
+        XCTAssertEqual(bottomDisplayTopEdge.blue, 0)
+
+        let bottomEdge = rawPixel(in: capture.image, x: 2, y: 7)
+        XCTAssertEqual(bottomEdge.red, 255)
+        XCTAssertEqual(bottomEdge.green, 255)
+        XCTAssertEqual(bottomEdge.blue, 0)
+    }
+
     // MARK: - Frozen area capture
 
     func testFrozenSnapshotCropsTheFrameCapturedAtSelectionStart() throws {
