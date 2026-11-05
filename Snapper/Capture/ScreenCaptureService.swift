@@ -12,6 +12,12 @@ final class ScreenCaptureService {
         let scale: CGFloat
     }
 
+    struct DisplayCapture {
+        let frame: CGRect
+        let scale: CGFloat
+        let image: CGImage
+    }
+
     struct RectCaptureContext {
         let displayFrame: CGRect
         let displayScale: CGFloat
@@ -215,7 +221,7 @@ final class ScreenCaptureService {
             throw CaptureError.noDisplay
         }
 
-        var capturedDisplays: [(frame: CGRect, scale: CGFloat, image: CGImage)] = []
+        var capturedDisplays: [DisplayCapture] = []
         capturedDisplays.reserveCapacity(content.displays.count)
 
         for display in content.displays {
@@ -232,22 +238,33 @@ final class ScreenCaptureService {
                 contentFilter: filter,
                 configuration: config
             )
-            capturedDisplays.append((frame: frame, scale: scale, image: image))
+            capturedDisplays.append(DisplayCapture(frame: frame, scale: scale, image: image))
         }
 
-        let canvasScale = max(1.0, retinaScale ? capturedDisplays.map(\.scale).max() ?? 1.0 : 1.0)
-        guard let composed = Self.composeDisplays(
+        return try Self.composeDisplays(capturedDisplays)
+    }
+
+    /// Composes ScreenCaptureKit display images into one image whose pixel
+    /// coordinates use the same top-left convention as the display frames.
+    /// The bitmap context itself remains in native Quartz bottom-left space so
+    /// drawing a CGImage does not mirror its contents vertically.
+    static func composeDisplays(_ capturedDisplays: [DisplayCapture]) throws -> MultiDisplayCapture {
+        guard !capturedDisplays.isEmpty else {
+            throw CaptureError.noDisplay
+        }
+
+        // Each display's scale is already 1.0 when Retina capture is off.
+        let canvasScale = max(1.0, capturedDisplays.map(\.scale).max() ?? 1.0)
+        guard let composed = composeDisplays(
             capturedDisplays.map { (frame: $0.frame, image: $0.image) },
             canvasScale: canvasScale
         ) else {
             throw CaptureError.cropFailed
         }
-        let image = composed.image
-        let unionRect = composed.unionRect
 
         return MultiDisplayCapture(
-            image: image,
-            sourceRect: unionRect,
+            image: composed.image,
+            sourceRect: composed.unionRect,
             scale: canvasScale
         )
     }
@@ -282,13 +299,13 @@ final class ScreenCaptureService {
 
         context.interpolationQuality = .high
 
-        // Draw in CGContext's native y-up space (a flipped CTM would render each
-        // image upside down). A display at CG top offset t occupies the canvas
-        // from y = canvasHeight - (t + height) upward.
         for display in displays {
+            // Display frames use top-left global coordinates, while the bitmap
+            // context uses bottom-left coordinates. Convert only the placement;
+            // flipping the context would also mirror each captured image.
             let targetRect = CGRect(
                 x: (display.frame.minX - unionRect.minX) * canvasScale,
-                y: CGFloat(canvasHeight) - (display.frame.maxY - unionRect.minY) * canvasScale,
+                y: (unionRect.maxY - display.frame.maxY) * canvasScale,
                 width: display.frame.width * canvasScale,
                 height: display.frame.height * canvasScale
             ).integral
