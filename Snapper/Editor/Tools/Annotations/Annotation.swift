@@ -31,6 +31,58 @@ enum AnnotationResizeHandle: CaseIterable {
 
 enum AnnotationGeometry {
     private static let minResizeDimension: CGFloat = 8
+    /// Extra slop (image pixels) beyond half the stroke width when hit-testing
+    /// stroked shapes, so thin lines remain clickable.
+    static let strokeHitTolerance: CGFloat = 4
+
+    static func distance(from point: CGPoint, toSegmentFrom a: CGPoint, to b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared > 0 else { return hypot(point.x - a.x, point.y - a.y) }
+        let t = min(max(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared, 0), 1)
+        let projection = CGPoint(x: a.x + t * dx, y: a.y + t * dy)
+        return hypot(point.x - projection.x, point.y - projection.y)
+    }
+
+    static func distance(from point: CGPoint, toPolyline points: [CGPoint]) -> CGFloat {
+        guard let first = points.first else { return .greatestFiniteMagnitude }
+        guard points.count > 1 else { return hypot(point.x - first.x, point.y - first.y) }
+        var best = CGFloat.greatestFiniteMagnitude
+        for index in 1..<points.count {
+            best = min(best, distance(from: point, toSegmentFrom: points[index - 1], to: points[index]))
+        }
+        return best
+    }
+
+    /// Rotation (radians, about the frame centre) the editable frame is drawn
+    /// with. Only shapes that store a rotation separately from their geometry
+    /// report one; others bake rotation into their points.
+    static func selectionRotationRadians(for annotation: any Annotation) -> CGFloat {
+        if let rectangle = annotation as? RectangleAnnotation {
+            return rectangle.rotationDegrees * (.pi / 180)
+        }
+        if let ellipse = annotation as? EllipseAnnotation {
+            return ellipse.rotationDegrees * (.pi / 180)
+        }
+        if let text = annotation as? TextAnnotation {
+            return text.rotationDegrees * (.pi / 180)
+        }
+        return 0
+    }
+
+    /// The unrotated frame used for the selection outline and handles; pair
+    /// with `selectionRotationRadians(for:)`.
+    static func selectionFrame(for annotation: any Annotation) -> CGRect {
+        if let text = annotation as? TextAnnotation {
+            return text.unrotatedFrame.standardized
+        }
+        return editableFrame(for: annotation)
+    }
+
+    static func rotate(point: CGPoint, around center: CGPoint, by angle: CGFloat) -> CGPoint {
+        rotate(point, around: center, by: angle)
+    }
 
     static func editableFrame(for annotation: any Annotation) -> CGRect {
         if let rectangle = annotation as? RectangleAnnotation {

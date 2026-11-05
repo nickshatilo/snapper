@@ -161,41 +161,52 @@ struct HistoryBrowserView: View {
         .padding(8)
         .background(selectedRecords.contains(record.id) ? Color.accentColor.opacity(0.2) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture {
-            if selectedRecords.contains(record.id) {
-                selectedRecords.remove(record.id)
-            } else {
-                selectedRecords.insert(record.id)
-            }
+            toggleSelection(record)
         }
         .contextMenu {
-            Button("Open in Editor") {
-                if let image = NSImage(contentsOfFile: record.filePath)?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                    NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(image))
-                }
+            recordActions(record)
+        }
+    }
+
+    private func toggleSelection(_ record: CaptureRecord) {
+        if selectedRecords.contains(record.id) {
+            selectedRecords.remove(record.id)
+        } else {
+            selectedRecords.insert(record.id)
+        }
+    }
+
+    @ViewBuilder
+    private func recordActions(_ record: CaptureRecord) -> some View {
+        Button("Open in Editor") {
+            if let image = NSImage(contentsOfFile: record.filePath)?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(image))
             }
-            .disabled(record.filePath.isEmpty)
-            Button("Show in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: record.filePath)])
+        }
+        .disabled(record.filePath.isEmpty)
+        Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: record.filePath)])
+        }
+        .disabled(record.filePath.isEmpty)
+        Button("Copy") {
+            if let image = NSImage(contentsOfFile: record.filePath) {
+                PasteboardHelper.copyImage(
+                    image,
+                    showsConfirmation: true,
+                    confirmationScreen: NSApp.keyWindow?.screen
+                )
             }
-            .disabled(record.filePath.isEmpty)
-            Button("Copy") {
-                if let image = NSImage(contentsOfFile: record.filePath) {
-                    PasteboardHelper.copyImage(
-                        image,
-                        showsConfirmation: true,
-                        confirmationScreen: NSApp.keyWindow?.screen
-                    )
-                }
-            }
-            .disabled(record.filePath.isEmpty)
-            Divider()
-            Button("Delete", role: .destructive) {
-                Task { @MainActor in
-                    removeThumbnailFromCache(for: record)
-                    historyManager.delete(record)
-                    records.removeAll { $0.id == record.id }
-                }
+        }
+        .disabled(record.filePath.isEmpty)
+        Divider()
+        Button("Delete", role: .destructive) {
+            Task { @MainActor in
+                removeThumbnailFromCache(for: record)
+                historyManager.delete(record)
+                records.removeAll { $0.id == record.id }
+                selectedRecords.remove(record.id)
             }
         }
     }
@@ -222,6 +233,17 @@ struct HistoryBrowserView: View {
             Text(ByteCountFormatter.string(fromByteCount: Int64(record.fileSize), countStyle: .file))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .listRowBackground(
+            selectedRecords.contains(record.id) ? Color.accentColor.opacity(0.2) : Color.clear
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            toggleSelection(record)
+        }
+        .contextMenu {
+            recordActions(record)
         }
     }
 

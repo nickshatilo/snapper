@@ -144,6 +144,8 @@ final class CaptureCoordinator {
                 return
             }
             let rect = selection.rect
+            // Convert on the main thread; the task below runs off it.
+            let cgRect = CoordinateSpace.appKitToCG(rect)
 
             Task {
                 do {
@@ -152,7 +154,7 @@ final class CaptureCoordinator {
                         image = frozenImage
                     } else {
                         image = try await self.captureService.captureRect(
-                            CoordinateSpace.appKitToCG(rect),
+                            cgRect,
                             retinaScale: options.retina2x
                         )
                     }
@@ -166,8 +168,10 @@ final class CaptureCoordinator {
                         scale: rect.width > 0 ? CGFloat(image.width) / rect.width : 1
                     )
                     await self.finishCapture(result: result, options: options)
+                    await self.restoreFocus(selection.focusRestorer, after: nil)
                 } catch {
                     await self.handleCaptureError(error, context: "Area capture")
+                    await self.restoreFocus(selection.focusRestorer, after: error)
                 }
             }
         }
@@ -181,7 +185,7 @@ final class CaptureCoordinator {
     private func captureWindow(options: CaptureOptions) {
         windowSelectorController?.close()
         windowSelectorController = nil
-        windowSelectorController = WindowSelectorController { [weak self] windowInfo in
+        windowSelectorController = WindowSelectorController(completion: { [weak self] windowInfo in
             guard let self else { return }
             self.windowSelectorController?.close()
             self.windowSelectorController = nil
@@ -193,28 +197,32 @@ final class CaptureCoordinator {
 
             Task {
                 do {
-                    let image = try await self.captureService.captureWindow(
+                    let capture = try await self.captureService.captureWindow(
                         windowInfo.window,
                         retinaScale: options.retina2x,
                         includeShadow: options.includeShadow
                     )
                     let result = CaptureResult(
-                        image: image,
+                        image: capture.image,
                         mode: .window,
                         timestamp: Date(),
                         sourceRect: windowInfo.frame,
                         windowName: windowInfo.title,
                         applicationName: windowInfo.appName,
-                        scale: windowInfo.frame.width > 0
-                            ? CGFloat(image.width) / windowInfo.frame.width
-                            : 1
+                        scale: capture.scale
                     )
                     await self.finishCapture(result: result, options: options)
+                    await self.restoreFocus(windowInfo.focusRestorer, after: nil)
                 } catch {
                     await self.handleCaptureError(error, context: "Window capture")
+                    await self.restoreFocus(windowInfo.focusRestorer, after: error)
                 }
             }
-        }
+        }, failure: { [weak self] error in
+            // Window list couldn't be loaded (e.g. no Screen Recording permission).
+            self?.windowSelectorController = nil
+            self?.handleCaptureError(error, context: "Window selection")
+        })
         windowSelectorController?.show()
     }
 
@@ -246,14 +254,20 @@ final class CaptureCoordinator {
                     mode: result.mode,
                     appName: result.applicationName
                 )
-                let url = FileManager.default.uniqueURL(
+                // Saves run concurrently, and encoding a large capture takes
+                // long enough for a second same-second capture to pick the
+                // same name. Reserving the name atomically keeps them apart.
+                if let url = FileManager.default.reserveUniqueURL(
                     for: options.saveDirectory
                         .appendingPathComponent(filename)
                         .appendingPathExtension(options.format.fileExtension)
-                )
-                if ImageUtils.save(result.image, to: url, format: options.format, jpegQuality: options.jpegQuality) {
-                    savedURL = url
-                    fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                ) {
+                    if ImageUtils.save(result.image, to: url, format: options.format, jpegQuality: options.jpegQuality) {
+                        savedURL = url
+                        fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                    } else {
+                        try? FileManager.default.removeItem(at: url)
+                    }
                 }
             }
             let thumbnail = ImageUtils.generateThumbnail(result.image)
@@ -271,6 +285,16 @@ final class CaptureCoordinator {
                 )
             }
         }
+    }
+
+    /// Hands focus back to the app the user was in after a selector-driven
+    /// capture, except when the error path is sending them to System Settings.
+    @MainActor
+    private func restoreFocus(_ focusRestorer: FocusRestorer?, after error: Error?) {
+        if let captureError = error as? CaptureError, captureError == .permissionDenied {
+            return
+        }
+        focusRestorer?.restore()
     }
 
     @MainActor

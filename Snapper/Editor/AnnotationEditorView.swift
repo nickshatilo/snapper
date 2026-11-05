@@ -191,6 +191,8 @@ struct AnnotationEditorView: View {
     }
 
     private func exportToClipboard() {
+        // Commit an in-progress inline text edit so the export matches the screen.
+        canvasState.commitPendingEdits()
         guard let image = canvasState.renderFinalImage() else { return }
         PasteboardHelper.copyImage(
             image,
@@ -200,6 +202,8 @@ struct AnnotationEditorView: View {
     }
 
     private func exportSave() {
+        // Commit an in-progress inline text edit so the export matches the screen.
+        canvasState.commitPendingEdits()
         guard let image = canvasState.renderFinalImage(),
               let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
             return
@@ -218,6 +222,8 @@ struct AnnotationEditorView: View {
     }
 
     private func exportSaveAs() {
+        // Commit an in-progress inline text edit so the export matches the screen.
+        canvasState.commitPendingEdits()
         guard let image = canvasState.renderFinalImage() else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png, .jpeg, .tiff]

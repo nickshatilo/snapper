@@ -49,7 +49,7 @@ final class ArrowAnnotation: Annotation {
         let length = max(hypot(dx, dy), 0.001)
         let direction = CGPoint(x: dx / length, y: dy / length)
         let angle = atan2(direction.y, direction.x)
-        let arrowLength: CGFloat = max(strokeWidth * 4, 15)
+        let arrowLength = headLength
         let arrowAngle: CGFloat = .pi / 6
 
         let leftHead = CGPoint(
@@ -75,12 +75,7 @@ final class ArrowAnnotation: Annotation {
             context.fillPath()
 
         case .curved:
-            let normal = CGPoint(x: -direction.y, y: direction.x)
-            let curvature = min(max(length * 0.22, 10), 72)
-            let control = CGPoint(
-                x: (start.x + end.x) / 2 + normal.x * curvature,
-                y: (start.y + end.y) / 2 + normal.y * curvature
-            )
+            let control = curveControlPoint
 
             context.move(to: start)
             context.addQuadCurve(to: end, control: control)
@@ -140,6 +135,55 @@ final class ArrowAnnotation: Annotation {
         }
 
         context.restoreGState()
+    }
+
+    private var headLength: CGFloat { max(strokeWidth * 4, 15) }
+
+    private var curveControlPoint: CGPoint {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let length = max(hypot(dx, dy), 0.001)
+        let normal = CGPoint(x: -dy / length, y: dx / length)
+        let curvature = min(max(length * 0.22, 10), 72)
+        return CGPoint(
+            x: (start.x + end.x) / 2 + normal.x * curvature,
+            y: (start.y + end.y) / 2 + normal.y * curvature
+        )
+    }
+
+    func hitTest(point: CGPoint) -> Bool {
+        let tolerance = AnnotationGeometry.strokeHitTolerance
+        // Arrowhead: anything within the head's reach of the tip.
+        if hypot(point.x - end.x, point.y - end.y) <= headLength + tolerance {
+            return true
+        }
+
+        let shaftHalfWidth: CGFloat
+        switch style {
+        case .tapered:
+            shaftHalfWidth = max(strokeWidth * 2.2, 6) / 2
+        default:
+            shaftHalfWidth = strokeWidth / 2
+        }
+
+        let shaft: [CGPoint]
+        if style == .curved {
+            let control = curveControlPoint
+            let samples = 24
+            shaft = (0...samples).map { step in
+                let t = CGFloat(step) / CGFloat(samples)
+                let u: CGFloat = 1 - t
+                let a: CGFloat = u * u
+                let b: CGFloat = 2 * u * t
+                let c: CGFloat = t * t
+                let x: CGFloat = a * start.x + b * control.x + c * end.x
+                let y: CGFloat = a * start.y + b * control.y + c * end.y
+                return CGPoint(x: x, y: y)
+            }
+        } else {
+            shaft = [start, end]
+        }
+        return AnnotationGeometry.distance(from: point, toPolyline: shaft) <= shaftHalfWidth + tolerance
     }
 
     func duplicate() -> any Annotation {

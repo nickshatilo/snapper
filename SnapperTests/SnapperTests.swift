@@ -140,7 +140,9 @@ final class SnapperTests: XCTestCase {
         XCTAssertEqual(state.imageWidth, 120)
         XCTAssertEqual(state.imageHeight, 90)
         XCTAssertTrue(state.annotations.contains { $0.id == rectangle.id })
-        XCTAssertTrue(state.annotations.contains { $0.id == crop.id })
+        // Undo fully reverts the crop; no (possibly hidden) crop rect may linger
+        // and keep cropping exports.
+        XCTAssertFalse(state.annotations.contains { $0 is CropAnnotation })
 
         state.undoManager.redo(state: state)
         XCTAssertEqual(state.imageWidth, 50)

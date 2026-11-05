@@ -17,8 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var onboardingWindowController: OnboardingWindowController?
     private var settingsWindow: NSWindow?
     private var observerTokens: [NSObjectProtocol] = []
+    private var historyRetentionTimer: Timer?
 
     deinit {
+        historyRetentionTimer?.invalidate()
         for token in observerTokens {
             NotificationCenter.default.removeObserver(token)
         }
@@ -66,13 +68,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // History & editor notifications
         observeNotifications()
 
-        // History retention cleanup
-        Task { @MainActor in
-            let days = appState.historyRetentionDays
-            if days > 0 {
-                historyManager?.deleteOlderThan(days: days)
-            }
+        // History retention cleanup: at launch, then periodically, since a
+        // menu bar app can run for weeks without relaunching.
+        applyHistoryRetention()
+        let retentionTimer = Timer(timeInterval: 60 * 60, repeats: true) { [weak self] _ in
+            self?.applyHistoryRetention()
         }
+        retentionTimer.tolerance = 5 * 60
+        RunLoop.main.add(retentionTimer, forMode: .common)
+        historyRetentionTimer = retentionTimer
 
         // First run
         if appState.isFirstRun {
@@ -85,6 +89,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         appState.flushDefaults()
+        pinnedScreenshotManager?.flushPendingPersist()
+    }
+
+    private func applyHistoryRetention() {
+        let days = appState.historyRetentionDays
+        guard days > 0 else { return }
+        historyManager?.deleteOlderThan(days: days)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -216,7 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     recordID: info.recordID,
                     fileSize: info.fileSize
                 )
+                historyManager.indexText(in: info.result.image, for: info.recordID)
             }
+            self?.applyHistoryRetention()
         }
         observerTokens.append(captureCompletedToken)
 

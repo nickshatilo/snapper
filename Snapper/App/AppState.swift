@@ -54,10 +54,6 @@ final class AppState {
         didSet { enqueueDefault(filenamePattern, forKey: Constants.Keys.filenamePattern) }
     }
 
-    var showCrosshair: Bool {
-        didSet { enqueueDefault(showCrosshair, forKey: Constants.Keys.showCrosshair) }
-    }
-
     var showMagnifier: Bool {
         didSet { enqueueDefault(showMagnifier, forKey: Constants.Keys.showMagnifier) }
     }
@@ -133,7 +129,6 @@ final class AppState {
 
         self.jpegQuality = defaults.object(forKey: Constants.Keys.jpegQuality) as? Double ?? 0.9
         self.filenamePattern = defaults.string(forKey: Constants.Keys.filenamePattern) ?? Constants.Defaults.filenamePattern
-        self.showCrosshair = defaults.object(forKey: Constants.Keys.showCrosshair) as? Bool ?? true
         self.showMagnifier = defaults.object(forKey: Constants.Keys.showMagnifier) as? Bool ?? false
         self.freezeScreen = defaults.object(forKey: Constants.Keys.freezeScreen) as? Bool ?? true
         self.retina2x = defaults.object(forKey: Constants.Keys.retina2x) as? Bool ?? true

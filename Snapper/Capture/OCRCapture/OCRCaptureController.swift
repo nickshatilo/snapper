@@ -36,6 +36,8 @@ final class OCRCaptureController {
                 return
             }
             let rect = selection.rect
+            // Convert on the main thread; the task below runs off it.
+            let cgRect = CoordinateSpace.appKitToCG(rect)
 
             Task {
                 do {
@@ -44,7 +46,7 @@ final class OCRCaptureController {
                         image = frozenImage
                     } else {
                         image = try await self.captureService.captureRect(
-                            CoordinateSpace.appKitToCG(rect),
+                            cgRect,
                             retinaScale: options?.retina2x ?? true
                         )
                     }
@@ -61,6 +63,10 @@ final class OCRCaptureController {
                             PermissionChecker.promptForScreenRecordingInSettings()
                         }
                         return
+                    }
+                    // No editor opened, so hand focus back to the user's app.
+                    await MainActor.run {
+                        selection.focusRestorer?.restore()
                     }
                     print("OCR capture failed: \(error)")
                 }

@@ -86,6 +86,7 @@ final class QuickAccessManager {
     }
 
     func removeCapture(_ id: UUID) {
+        captures.first { $0.id == id }?.invalidateCachedImage()
         withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.9, blendDuration: 0.08)) {
             captures.removeAll { $0.id == id }
         }
@@ -97,6 +98,9 @@ final class QuickAccessManager {
     }
 
     func dismissAll() {
+        for capture in captures {
+            capture.invalidateCachedImage()
+        }
         withAnimation(.easeInOut(duration: 0.2)) {
             captures.removeAll()
         }
@@ -216,18 +220,49 @@ struct QuickAccessCapture: Identifiable {
 
         guard let savedURL else { return nil }
         let cacheKey = savedURL.path as NSString
-        if let cachedImage = Self.loadedImageCache.object(forKey: cacheKey),
-           let cachedCG = cachedImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            return cachedCG
+        // The file can be deleted, replaced, or its name reused by a later
+        // capture; only trust the cache while the file is unchanged.
+        let modificationDate = Self.modificationDate(of: savedURL)
+        guard modificationDate != nil else {
+            Self.loadedImageCache.removeObject(forKey: cacheKey)
+            return nil
+        }
+        if let cached = Self.loadedImageCache.object(forKey: cacheKey),
+           cached.modificationDate == modificationDate {
+            return cached.image
         }
 
         guard let nsImage = NSImage(contentsOf: savedURL),
               let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            Self.loadedImageCache.removeObject(forKey: cacheKey)
             return nil
         }
-        Self.loadedImageCache.setObject(nsImage, forKey: cacheKey)
+        Self.loadedImageCache.setObject(
+            CachedImage(image: cgImage, modificationDate: modificationDate),
+            forKey: cacheKey
+        )
         return cgImage
     }
 
-    private static let loadedImageCache = NSCache<NSString, NSImage>()
+    /// Drops any cached full-size image for this capture's file.
+    func invalidateCachedImage() {
+        guard let savedURL else { return }
+        Self.loadedImageCache.removeObject(forKey: savedURL.path as NSString)
+    }
+
+    private static func modificationDate(of url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+    }
+
+    private final class CachedImage {
+        let image: CGImage
+        let modificationDate: Date?
+
+        init(image: CGImage, modificationDate: Date?) {
+            self.image = image
+            self.modificationDate = modificationDate
+        }
+    }
+
+    private static let loadedImageCache = NSCache<NSString, CachedImage>()
 }

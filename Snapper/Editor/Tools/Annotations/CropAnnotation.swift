@@ -78,6 +78,9 @@ final class CropAnnotation: Annotation {
     }
 
     func duplicate() -> any Annotation {
-        CropAnnotation(id: id, rect: rect)
+        let copy = CropAnnotation(id: id, rect: rect)
+        copy.zOrder = zOrder
+        copy.isVisible = isVisible
+        return copy
     }
 }

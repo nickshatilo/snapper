@@ -53,6 +53,11 @@ final class LineAnnotation: Annotation {
         context.restoreGState()
     }
 
+    func hitTest(point: CGPoint) -> Bool {
+        AnnotationGeometry.distance(from: point, toSegmentFrom: start, to: end)
+            <= strokeWidth / 2 + AnnotationGeometry.strokeHitTolerance
+    }
+
     func duplicate() -> any Annotation {
         LineAnnotation(
             id: id,

@@ -44,17 +44,27 @@ final class PixelateAnnotation: Annotation {
         let normalizedRect = rect.standardized.integral
         guard normalizedRect.width > 1, normalizedRect.height > 1 else { return }
 
+        // Only the on-image part is processed; drawing it into the full rect
+        // would stretch it out of alignment with the pixels it covers.
+        let imageBounds = CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
+        let drawRect = normalizedRect.intersection(imageBounds)
+        guard !drawRect.isNull, drawRect.width > 1, drawRect.height > 1 else { return }
+
         if cachedProcessedImage == nil {
-            let imageBounds = CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
-            let cropRect = normalizedRect.intersection(imageBounds)
-            guard cropRect.width > 1, cropRect.height > 1,
-                  let croppedSource = sourceImage.cropping(to: cropRect) else { return }
-            cachedProcessedImage = Self.processedCroppedImage(for: croppedSource, blockSize: blockSize, cropRect: cropRect)
+            // Annotation space is y-up; CGImage cropping is top-left origin.
+            let pixelRect = CGRect(
+                x: drawRect.minX,
+                y: imageBounds.height - drawRect.maxY,
+                width: drawRect.width,
+                height: drawRect.height
+            )
+            guard let croppedSource = sourceImage.cropping(to: pixelRect) else { return }
+            cachedProcessedImage = Self.processedCroppedImage(for: croppedSource, blockSize: blockSize, cropRect: pixelRect)
         }
         guard let processedImage = cachedProcessedImage else { return }
 
-        context.clip(to: normalizedRect)
-        context.draw(processedImage, in: normalizedRect)
+        context.clip(to: drawRect)
+        context.draw(processedImage, in: drawRect)
     }
 
     func duplicate() -> any Annotation {
@@ -77,7 +87,9 @@ final class PixelateAnnotation: Annotation {
 
         let ciInput = CIImage(cgImage: croppedSource)
         guard let filter = CIFilter(name: "CIPixellate") else { return nil }
-        filter.setValue(ciInput, forKey: kCIInputImageKey)
+        // Clamp so edge blocks whose sample point falls outside the region
+        // stay opaque instead of exposing the original pixels underneath.
+        filter.setValue(ciInput.clampedToExtent(), forKey: kCIInputImageKey)
         filter.setValue(max(1, blockSize), forKey: kCIInputScaleKey)
         filter.setValue(CIVector(x: ciInput.extent.midX, y: ciInput.extent.midY), forKey: kCIInputCenterKey)
 

@@ -208,9 +208,21 @@ final class HotkeyManager {
         guard let action = action(forKeyCode: keyCode, flags: event.flags) else {
             return event
         }
+        // Suppress the event (including key repeats) so a colliding system
+        // shortcut (e.g. ⌘⇧3) doesn't also fire.
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            // Holding the shortcut must not fire it again on every repeat.
+            return nil
+        }
+        if let recorder = HotkeyRecorderNSView.activeRecorder, let binding = bindings[action] {
+            // While a shortcut is being recorded, hand bound combos to the
+            // recorder (so it can report the conflict) instead of acting.
+            DispatchQueue.main.async {
+                recorder.receiveInterceptedBinding(binding)
+            }
+            return nil
+        }
         dispatch(action)
-        // Suppress the event so a colliding system shortcut (e.g. ⌘⇧3)
-        // doesn't also fire.
         return nil
     }
 
@@ -313,6 +325,14 @@ final class HotkeyManager {
 
         guard status == noErr, hotKeyID.signature == carbonSignature else { return }
         guard let action = carbonHotkeyActionsByID[hotKeyID.id] else { return }
+        // Carbon consumes registered combos before the recorder's key monitor
+        // sees them, so forward them while a shortcut is being recorded.
+        if let recorder = HotkeyRecorderNSView.activeRecorder {
+            if let binding = bindings[action] {
+                recorder.receiveInterceptedBinding(binding)
+            }
+            return
+        }
         dispatch(action)
     }
 
@@ -346,6 +366,11 @@ final class HotkeyManager {
     private func handleFallbackHotkey(_ event: NSEvent) {
         // Event tap has priority because it can suppress system screenshots.
         if eventTap != nil {
+            return
+        }
+        // Key repeats must not re-fire a held shortcut; while recording, the
+        // recorder's own monitor receives the key instead.
+        if event.isARepeat || HotkeyRecorderNSView.activeRecorder != nil {
             return
         }
 

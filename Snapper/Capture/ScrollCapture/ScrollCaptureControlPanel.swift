@@ -22,6 +22,7 @@ struct ScrollCaptureControlPanelView: View {
             Button("Stop", action: onStop)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .help("Stop and keep what has been captured. Press Esc to cancel.")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -34,10 +35,14 @@ struct ScrollCaptureControlPanelView: View {
 final class ScrollCaptureControlPanel {
     let state = ScrollCaptureControlState()
     private let onStop: () -> Void
+    private let onCancel: () -> Void
     private var panel: NSPanel?
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
 
-    init(onStop: @escaping () -> Void) {
+    init(onStop: @escaping () -> Void, onCancel: @escaping () -> Void) {
         self.onStop = onStop
+        self.onCancel = onCancel
     }
 
     /// Shows the panel on the screen containing `captureRect` (AppKit global
@@ -87,10 +92,42 @@ final class ScrollCaptureControlPanel {
 
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
+        installEscapeMonitors()
     }
 
     func close() {
+        removeEscapeMonitors()
         panel?.orderOut(nil)
         panel = nil
+    }
+
+    /// Escape cancels the session. The scrolled app is frontmost, so this
+    /// needs a global monitor (delivered only when Snapper is trusted for
+    /// Accessibility); the local one covers Snapper itself being active.
+    private func installEscapeMonitors() {
+        removeEscapeMonitors()
+        let escapeKeyCode: UInt16 = 53
+        let onCancel = onCancel
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == escapeKeyCode {
+                onCancel()
+            }
+        }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == escapeKeyCode else { return event }
+            onCancel()
+            return nil
+        }
+    }
+
+    private func removeEscapeMonitors() {
+        if let globalKeyMonitor {
+            NSEvent.removeMonitor(globalKeyMonitor)
+            self.globalKeyMonitor = nil
+        }
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+            self.localKeyMonitor = nil
+        }
     }
 }

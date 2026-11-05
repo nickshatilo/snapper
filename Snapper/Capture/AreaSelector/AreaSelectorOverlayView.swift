@@ -3,6 +3,8 @@ import AppKit
 final class AreaSelectorOverlayView: NSView {
     var frozenImage: CGImage?
     var showsMagnifier = false
+    /// Snapshot of this overlay's screen that the magnifier samples from.
+    var magnifierSource: FrozenScreenSnapshot.Display?
 
     private var selectionRect: NSRect?
     private var selectionPixelSize: CGSize?
@@ -128,7 +130,7 @@ final class AreaSelectorOverlayView: NSView {
     }
 
     private func updateMagnifier(atScreenPoint screenPoint: NSPoint) {
-        guard showsMagnifier, let window else {
+        guard showsMagnifier, let window, let magnifierSource else {
             magnifierView?.isHidden = true
             return
         }
@@ -139,9 +141,7 @@ final class AreaSelectorOverlayView: NSView {
             y: screenPoint.y - window.frame.origin.y
         )
 
-        if let screen = window.screen {
-            magnifier.update(at: screenPoint, on: screen)
-        }
+        magnifier.update(at: screenPoint, from: magnifierSource)
         magnifier.isHidden = false
 
         var frame = magnifier.frame

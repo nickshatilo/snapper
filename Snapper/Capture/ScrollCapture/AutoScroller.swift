@@ -9,6 +9,10 @@ final class AutoScroller {
     enum StepResult {
         case requested
         case reachedEnd
+        /// Wheel path only: the pointer is outside the capture region (the
+        /// user took it, e.g. toward Stop). Nothing was posted; try again
+        /// once it returns.
+        case paused
     }
 
     enum Target {
@@ -43,6 +47,8 @@ final class AutoScroller {
     }
 
     private let target: Target
+    /// Capture region, CG top-left global points.
+    private let region: CGRect
     private let eventSource = CGEventSource(stateID: .hidSystemState)
 
     /// Scroll magnitude, adapted after each observed shift so a step moves
@@ -51,14 +57,28 @@ final class AutoScroller {
     private var axStepFraction: Double = 0.02
     private var eventStepPoints: Double
     private let targetShiftRatio = 0.3
+    private let axStepFractionRange = 0.0002...0.25
+    private let eventStepPointsRange = 20.0...150.0
 
-    init(target: Target, regionHeightPoints: CGFloat) {
+    /// Scroll bar value at the last frame the stitcher accepted, so an
+    /// unverifiable (overshooting) AX step can be rewound.
+    private var acceptedAXValue: Double?
+
+    init(target: Target, region: CGRect) {
         self.target = target
-        self.eventStepPoints = min(max(Double(regionHeightPoints) * targetShiftRatio, 30), 120)
+        self.region = region
+        self.eventStepPoints = min(max(Double(region.height) * targetShiftRatio, 30), 120)
     }
 
     var targetName: String? {
         target.appName
+    }
+
+    /// Wheel-event targets have no end-of-content signal; the caller infers
+    /// the end from the content no longer moving.
+    var usesWheelEvents: Bool {
+        if case .event = target { return true }
+        return false
     }
 
     static func resolveTarget(
@@ -142,8 +162,16 @@ final class AutoScroller {
             application.activate(options: [.activateAllWindows])
         }
 
-        if case let .event(point, _, _) = target {
+        switch target {
+        case let .event(point, _, _):
+            // Park the pointer over the target once so HID-routed wheel events
+            // reach it. Steps never move it again; see `requestNextStep`.
             movePointer(to: point)
+        case let .accessibility(scrollBar, _, _):
+            acceptedAXValue = copyNumberAttribute(kAXValueAttribute as CFString, from: scrollBar)
+            if let fraction = initialAXStepFraction(scrollBar: scrollBar) {
+                axStepFraction = fraction
+            }
         }
     }
 
@@ -152,26 +180,90 @@ final class AutoScroller {
         case let .accessibility(scrollBar, _, _):
             return requestAXScrollStep(scrollBar: scrollBar)
         case let .event(point, _, _):
-            movePointer(to: point)
+            // HID-tap wheel events go to the window under the pointer. If the
+            // user has moved it off the region, don't yank it back (that made
+            // Stop unclickable) and don't scroll whatever it is over: pause.
+            guard let pointer = CGEvent(source: nil)?.location, region.contains(pointer) else {
+                return .paused
+            }
             postScrollEvent(at: point)
             return .requested
         }
     }
 
-    /// Feeds back the pixel shift the estimator actually observed so the next
-    /// step lands near the target ratio — small enough for reliable overlap
-    /// detection, large enough to make progress.
+    /// Feeds back the pixel shift the estimator actually observed (for the
+    /// frame the stitcher accepted) so the next step lands near the target
+    /// ratio — small enough for reliable overlap detection, large enough to
+    /// make progress.
     func adaptStep(observedShift: Int, regionHeight: Int) {
         guard observedShift > 0, regionHeight > 0 else { return }
         let targetShift = Double(regionHeight) * targetShiftRatio
         let ratio = min(max(targetShift / Double(observedShift), 0.5), 2.0)
 
         switch target {
-        case .accessibility:
-            axStepFraction = min(max(axStepFraction * ratio, 0.005), 0.25)
+        case let .accessibility(scrollBar, _, _):
+            axStepFraction = clamp(axStepFraction * ratio, to: axStepFractionRange)
+            acceptedAXValue = copyNumberAttribute(kAXValueAttribute as CFString, from: scrollBar)
         case .event:
-            eventStepPoints = min(max(eventStepPoints * ratio, 20), 150)
+            eventStepPoints = clamp(eventStepPoints * ratio, to: eventStepPointsRange)
         }
+    }
+
+    /// The last step changed the content in a way the estimator couldn't
+    /// verify — most likely it overshot the overlap window. Halve the step
+    /// and, on the AX path, rewind to the last verified scroll position so
+    /// the retry is measured from known content instead of skipping past it.
+    func stepFailed() {
+        switch target {
+        case let .accessibility(scrollBar, _, _):
+            axStepFraction = clamp(axStepFraction * 0.5, to: axStepFractionRange)
+            if let acceptedAXValue {
+                _ = AXUIElementSetAttributeValue(
+                    scrollBar,
+                    kAXValueAttribute as CFString,
+                    NSNumber(value: acceptedAXValue)
+                )
+            }
+        case .event:
+            eventStepPoints = clamp(eventStepPoints * 0.5, to: eventStepPointsRange)
+        }
+    }
+
+    /// An AX step left the content visibly unchanged: the step was too small
+    /// to register, so grow it.
+    func stepProducedNoMotion() {
+        if case .accessibility = target {
+            axStepFraction = clamp(axStepFraction * 2, to: axStepFractionRange)
+        }
+    }
+
+    /// AX scroll bar values span the scrollable distance (content minus
+    /// viewport), so a fixed fraction of that range is wildly different on a
+    /// short note and a 300-page PDF. Derive the step from the visible
+    /// fraction (thumb / track) instead, so it moves ~`targetShiftRatio` of
+    /// the capture region regardless of document length.
+    private func initialAXStepFraction(scrollBar: AXUIElement) -> Double? {
+        guard let trackHeight = Self.copySizeAttribute(from: scrollBar)?.height,
+              trackHeight > 0,
+              let indicator = Self.copyChildren(of: scrollBar).first(where: {
+                  Self.copyStringAttribute(kAXRoleAttribute as CFString, from: $0) == (kAXValueIndicatorRole as String)
+              }),
+              let thumbHeight = Self.copySizeAttribute(from: indicator)?.height,
+              thumbHeight > 0 else {
+            return nil
+        }
+
+        let visibleFraction = Double(thumbHeight / trackHeight)
+        guard visibleFraction > 0, visibleFraction < 0.98 else { return nil }
+
+        // Viewport ≈ track height; scrollable distance = viewport * (1 - r) / r.
+        let scrollablePoints = Double(trackHeight) * (1 - visibleFraction) / visibleFraction
+        let targetPoints = Double(region.height) * targetShiftRatio
+        return clamp(targetPoints / scrollablePoints, to: axStepFractionRange)
+    }
+
+    private func clamp(_ value: Double, to range: ClosedRange<Double>) -> Double {
+        min(max(value, range.lowerBound), range.upperBound)
     }
 
     private func requestAXScrollStep(scrollBar: AXUIElement) -> StepResult {
@@ -209,6 +301,8 @@ final class AutoScroller {
         event.post(tap: CGEventTapLocation.cghidEventTap)
     }
 
+    /// Posts one wheel step without moving the pointer; callers ensure the
+    /// pointer is over the capture region.
     private func postScrollEvent(at point: CGPoint) {
         // Negative wheel1 scrolls the page down (content moves up), which is
         // the direction the motion estimator and stitcher are built for.
@@ -252,6 +346,37 @@ final class AutoScroller {
             return nil
         }
         return unsafeBitCast(value, to: AXUIElement.self)
+    }
+
+    private static func copyChildren(of element: AXUIElement) -> [AXUIElement] {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
+              let children = value as? [AXUIElement] else {
+            return []
+        }
+        return children
+    }
+
+    private static func copyStringAttribute(_ attribute: CFString, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else {
+            return nil
+        }
+        return value as? String
+    }
+
+    private static func copySizeAttribute(from element: AXUIElement) -> CGSize? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+        var size = CGSize.zero
+        guard AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cgSize, &size) else {
+            return nil
+        }
+        return size
     }
 
     private func copyNumberAttribute(_ attribute: CFString, from element: AXUIElement) -> Double? {

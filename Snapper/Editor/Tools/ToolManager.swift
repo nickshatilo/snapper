@@ -34,7 +34,13 @@ final class ToolManager {
     private var activeAnnotation: (any Annotation)?
     private var dragStartPoint: NSPoint?
     private var pencilPoints: [NSPoint] = []
-    private var counterValue: Int = 1
+
+    /// Next counter number, derived from the counters currently on the canvas
+    /// so undo/delete of a counter is reflected in the next one placed.
+    static func nextCounterValue(in annotations: [any Annotation]) -> Int {
+        let existingMax = annotations.compactMap { ($0 as? CounterAnnotation)?.value }.max() ?? 0
+        return existingMax + 1
+    }
 
     func mouseDown(at point: NSPoint, canvasState: CanvasState) {
         dragStartPoint = point
@@ -51,7 +57,7 @@ final class ToolManager {
         case .text:
             let annotation = TextAnnotation(
                 position: point,
-                text: "Text",
+                text: TextAnnotation.placeholderText,
                 fontName: fontName,
                 fontSize: fontSize,
                 color: strokeColor
@@ -62,14 +68,13 @@ final class ToolManager {
         case .counter:
             let annotation = CounterAnnotation(
                 position: point,
-                value: counterValue,
+                value: Self.nextCounterValue(in: canvasState.annotations),
                 style: counterStyle,
                 color: strokeColor
             )
             canvasState.addAnnotation(annotation)
             canvasState.selectedAnnotationID = annotation.id
             canvasState.selectedAnnotationIDs = [annotation.id]
-            counterValue += 1
         default:
             break
         }

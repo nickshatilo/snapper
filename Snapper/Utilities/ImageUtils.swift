@@ -53,12 +53,23 @@ enum ImageUtils {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: outputColorSpace(for: [image]),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )
         context?.interpolationQuality = .high
         context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return context?.makeImage()
+    }
+
+    /// Colour space for an RGBA bitmap context that redraws `images`: the first
+    /// image's own space (e.g. the display's P3 profile) when an 8-bit RGB
+    /// context can render into it, else sRGB. Using DeviceRGB instead would drop
+    /// the display profile and shift colours.
+    static func outputColorSpace(for images: [CGImage]) -> CGColorSpace {
+        if let space = images.first?.colorSpace, space.model == .rgb, space.supportsOutput {
+            return space
+        }
+        return CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
     }
 
     static func generateThumbnail(_ image: CGImage, maxWidth: CGFloat = Constants.Defaults.thumbnailWidth) -> CGImage? {

@@ -44,17 +44,27 @@ final class BlurAnnotation: Annotation {
         let normalizedRect = rect.standardized.integral
         guard normalizedRect.width > 1, normalizedRect.height > 1 else { return }
 
+        // Only the on-image part is processed; drawing it into the full rect
+        // would stretch it out of alignment with the pixels it covers.
+        let imageBounds = CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
+        let drawRect = normalizedRect.intersection(imageBounds)
+        guard !drawRect.isNull, drawRect.width > 1, drawRect.height > 1 else { return }
+
         if cachedProcessedImage == nil {
-            let imageBounds = CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
-            let cropRect = normalizedRect.intersection(imageBounds)
-            guard cropRect.width > 1, cropRect.height > 1,
-                  let croppedSource = sourceImage.cropping(to: cropRect) else { return }
-            cachedProcessedImage = Self.processedCroppedImage(for: croppedSource, intensity: intensity, cropRect: cropRect)
+            // Annotation space is y-up; CGImage cropping is top-left origin.
+            let pixelRect = CGRect(
+                x: drawRect.minX,
+                y: imageBounds.height - drawRect.maxY,
+                width: drawRect.width,
+                height: drawRect.height
+            )
+            guard let croppedSource = sourceImage.cropping(to: pixelRect) else { return }
+            cachedProcessedImage = Self.processedCroppedImage(for: croppedSource, intensity: intensity, cropRect: pixelRect)
         }
         guard let processedImage = cachedProcessedImage else { return }
 
-        context.clip(to: normalizedRect)
-        context.draw(processedImage, in: normalizedRect)
+        context.clip(to: drawRect)
+        context.draw(processedImage, in: drawRect)
     }
 
     func duplicate() -> any Annotation {
@@ -77,7 +87,10 @@ final class BlurAnnotation: Annotation {
 
         let ciInput = CIImage(cgImage: croppedSource)
         guard let filter = CIFilter(name: "CIGaussianBlur") else { return nil }
-        filter.setValue(ciInput, forKey: kCIInputImageKey)
+        // Clamp so the kernel samples edge pixels rather than transparency;
+        // otherwise the result fades out at the edges and the original
+        // (unredacted) pixels show through.
+        filter.setValue(ciInput.clampedToExtent(), forKey: kCIInputImageKey)
         filter.setValue(max(0.5, intensity), forKey: kCIInputRadiusKey)
 
         guard let output = filter.outputImage?.cropped(to: ciInput.extent) else { return nil }

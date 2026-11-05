@@ -5,11 +5,23 @@ final class PinnedScreenshotPanel: NSPanel {
         didSet { applyLockedState() }
     }
     var currentOpacity: CGFloat = 1.0 {
-        didSet { alphaValue = currentOpacity }
+        didSet {
+            alphaValue = currentOpacity
+            onStateChange?()
+        }
     }
     let imageID: UUID
     let sourceImage: CGImage
     let sourceScale: CGFloat
+    /// Called when the pin's frame or opacity changes, so it can be persisted.
+    var onStateChange: (() -> Void)?
+    private var geometryObservers: [NSObjectProtocol] = []
+
+    deinit {
+        for observer in geometryObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
 
     init(image: CGImage, scale: CGFloat = 1, frame: NSRect, id: UUID = UUID()) {
         self.imageID = id
@@ -45,6 +57,26 @@ final class PinnedScreenshotPanel: NSPanel {
         imageView.autoresizingMask = [.width, .height]
         imageView.frame = NSRect(origin: .zero, size: frame.size)
         contentView = imageView
+
+        // Drags, arrow-key nudges and resizes all end up here.
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+            geometryObservers.append(
+                NotificationCenter.default.addObserver(forName: name, object: self, queue: .main) { [weak self] _ in
+                    self?.onStateChange?()
+                }
+            )
+        }
+    }
+
+    /// Default on-screen size for a new pin: half the capture's point size,
+    /// scaled down uniformly to fit 400×300 so the aspect ratio is kept.
+    static func defaultSize(forPixelWidth width: Int, pixelHeight height: Int, scale: CGFloat) -> NSSize {
+        let pointScale = max(1, scale)
+        let halfWidth = CGFloat(width) / pointScale / 2
+        let halfHeight = CGFloat(height) / pointScale / 2
+        guard halfWidth > 0, halfHeight > 0 else { return NSSize(width: 100, height: 100) }
+        let factor = min(1, 400 / halfWidth, 300 / halfHeight)
+        return NSSize(width: halfWidth * factor, height: halfHeight * factor)
     }
 
     override var canBecomeKey: Bool { !isLocked }

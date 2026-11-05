@@ -10,8 +10,10 @@ import AppKit
 /// breaks everywhere else. The flip axis is the primary screen's AppKit maxY,
 /// and the conversion is its own inverse.
 enum CoordinateSpace {
+    /// Height of the primary (menu-bar) display, i.e. `NSScreen.screens.first`'s
+    /// maxY. Read via CoreGraphics so it is safe from background tasks.
     static var primaryScreenMaxY: CGFloat {
-        NSScreen.screens.first?.frame.maxY ?? 0
+        CGDisplayBounds(CGMainDisplayID()).maxY
     }
 
     static func appKitToCG(_ rect: CGRect, primaryScreenMaxY: CGFloat) -> CGRect {

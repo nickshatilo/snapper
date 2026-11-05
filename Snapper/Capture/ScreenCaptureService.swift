@@ -63,14 +63,29 @@ final class ScreenCaptureService {
         return try await captureAllDisplays(in: content, retinaScale: retinaScale)
     }
 
-    func captureWindow(_ window: SCWindow, retinaScale: Bool = true, includeShadow: Bool = true) async throws -> CGImage {
+    struct WindowCapture {
+        let image: CGImage
+        /// Pixels per point of `image`.
+        let scale: CGFloat
+    }
+
+    func captureWindow(_ window: SCWindow, retinaScale: Bool = true, includeShadow: Bool = true) async throws -> WindowCapture {
         try ensureScreenCapturePermission()
         let content = try await getCachedContent()
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
-        let scale = retinaScale ? displayScale(for: window.frame, in: content) : 1.0
-        config.width = max(1, Int(window.frame.width * scale))
-        config.height = max(1, Int(window.frame.height * scale))
+        // With shadows, the captured content is larger than the window frame;
+        // sizing the output to the frame would squeeze window + shadow into it.
+        // `filter.contentRect` covers the full content (points), and
+        // `pointPixelScale` is the native pixel density for it.
+        let filterScale = CGFloat(filter.pointPixelScale)
+        let nativeScale = filterScale > 0 ? filterScale : displayScale(for: window.frame, in: content)
+        let scale = retinaScale ? nativeScale : 1.0
+        let contentSize = includeShadow && !filter.contentRect.isEmpty
+            ? filter.contentRect.size
+            : window.frame.size
+        config.width = max(1, Int((contentSize.width * scale).rounded()))
+        config.height = max(1, Int((contentSize.height * scale).rounded()))
         config.showsCursor = false
         config.captureResolution = .best
         config.shouldBeOpaque = false
@@ -80,7 +95,7 @@ final class ScreenCaptureService {
             contentFilter: filter,
             configuration: config
         )
-        return image
+        return WindowCapture(image: image, scale: scale)
     }
 
     func captureRect(_ rect: CGRect, retinaScale: Bool = true) async throws -> CGImage {
@@ -168,25 +183,28 @@ final class ScreenCaptureService {
         }
     }
 
+    /// The display holding most of `rect` (by intersection area), so a rect
+    /// straddling two displays resolves to where the bulk of it is rather
+    /// than wherever its top-left corner happens to sit. Callers that stream
+    /// a single display must still clip `rect` to the returned display.
     private func resolveDisplay(for rect: CGRect, in content: SCShareableContent) -> SCDisplay? {
-        if let exactMatch = content.displays.first(where: {
-            CGRect(
-                x: CGFloat($0.frame.origin.x),
-                y: CGFloat($0.frame.origin.y),
-                width: CGFloat($0.frame.width),
-                height: CGFloat($0.frame.height)
-            ).contains(rect.origin)
-        }) {
-            return exactMatch
+        var bestDisplay: SCDisplay?
+        var bestArea: CGFloat = 0
+        for display in content.displays {
+            let overlap = displayRect(display).intersection(rect)
+            guard !overlap.isNull else { continue }
+            let area = overlap.width * overlap.height
+            if bestDisplay == nil || area > bestArea {
+                bestDisplay = display
+                bestArea = area
+            }
         }
-        return content.displays.first(where: {
-            CGRect(
-                x: CGFloat($0.frame.origin.x),
-                y: CGFloat($0.frame.origin.y),
-                width: CGFloat($0.frame.width),
-                height: CGFloat($0.frame.height)
-            ).intersects(rect)
-        }) ?? content.displays.first
+        if let bestDisplay {
+            return bestDisplay
+        }
+        // Degenerate (zero-size) rects: fall back to the display containing the origin.
+        return content.displays.first(where: { displayRect($0).contains(rect.origin) })
+            ?? content.displays.first
     }
 
     private func captureAllDisplays(
@@ -217,12 +235,36 @@ final class ScreenCaptureService {
             capturedDisplays.append((frame: frame, scale: scale, image: image))
         }
 
-        let unionRect = capturedDisplays
+        let canvasScale = max(1.0, retinaScale ? capturedDisplays.map(\.scale).max() ?? 1.0 : 1.0)
+        guard let composed = Self.composeDisplays(
+            capturedDisplays.map { (frame: $0.frame, image: $0.image) },
+            canvasScale: canvasScale
+        ) else {
+            throw CaptureError.cropFailed
+        }
+        let image = composed.image
+        let unionRect = composed.unionRect
+
+        return MultiDisplayCapture(
+            image: image,
+            sourceRect: unionRect,
+            scale: canvasScale
+        )
+    }
+
+    /// Composes per-display images into one canvas laid out in CG top-left
+    /// global space: the result's top-left pixel is `unionRect`'s top-left,
+    /// matching what `crop()` expects. Display frames are CG global points.
+    static func composeDisplays(
+        _ displays: [(frame: CGRect, image: CGImage)],
+        canvasScale: CGFloat
+    ) -> (image: CGImage, unionRect: CGRect)? {
+        guard !displays.isEmpty else { return nil }
+        let unionRect = displays
             .map(\.frame)
             .reduce(CGRect.null) { partial, frame in
                 partial.union(frame)
             }
-        let canvasScale = max(1.0, retinaScale ? capturedDisplays.map(\.scale).max() ?? 1.0 : 1.0)
         let canvasWidth = max(1, Int((unionRect.width * canvasScale).rounded(.up)))
         let canvasHeight = max(1, Int((unionRect.height * canvasScale).rounded(.up)))
 
@@ -232,37 +274,29 @@ final class ScreenCaptureService {
             height: canvasHeight,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: ImageUtils.outputColorSpace(for: displays.map(\.image)),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
-            throw CaptureError.cropFailed
+            return nil
         }
 
         context.interpolationQuality = .high
-        context.translateBy(x: 0, y: CGFloat(canvasHeight))
-        context.scaleBy(x: 1, y: -1)
 
-        for captured in capturedDisplays {
-            // Placement must match the CG top-left convention used by `crop()`:
-            // the composed image's top row corresponds to `unionRect.minY`.
+        // Draw in CGContext's native y-up space (a flipped CTM would render each
+        // image upside down). A display at CG top offset t occupies the canvas
+        // from y = canvasHeight - (t + height) upward.
+        for display in displays {
             let targetRect = CGRect(
-                x: (captured.frame.minX - unionRect.minX) * canvasScale,
-                y: (captured.frame.minY - unionRect.minY) * canvasScale,
-                width: captured.frame.width * canvasScale,
-                height: captured.frame.height * canvasScale
+                x: (display.frame.minX - unionRect.minX) * canvasScale,
+                y: CGFloat(canvasHeight) - (display.frame.maxY - unionRect.minY) * canvasScale,
+                width: display.frame.width * canvasScale,
+                height: display.frame.height * canvasScale
             ).integral
-            context.draw(captured.image, in: targetRect)
+            context.draw(display.image, in: targetRect)
         }
 
-        guard let image = context.makeImage() else {
-            throw CaptureError.cropFailed
-        }
-
-        return MultiDisplayCapture(
-            image: image,
-            sourceRect: unionRect,
-            scale: canvasScale
-        )
+        guard let image = context.makeImage() else { return nil }
+        return (image, unionRect)
     }
 
     private func crop(rect: CGRect, from image: CGImage, sourceRect: CGRect, scale: CGFloat) throws -> CGImage {
@@ -298,22 +332,28 @@ final class ScreenCaptureService {
     }
 
     private func displayScaleFactor(for display: SCDisplay) -> CGFloat {
-        for screen in NSScreen.screens {
-            guard let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-                continue
-            }
-            if screenID == display.displayID {
-                return max(1, screen.backingScaleFactor)
-            }
+        // Called from background tasks, so avoid NSScreen (main-thread AppKit
+        // state). The current mode's backing pixel width over its point width is
+        // the display's backing scale factor.
+        guard let mode = CGDisplayCopyDisplayMode(display.displayID), mode.width > 0 else {
+            return 2.0
         }
-        return 2.0
+        return max(1, CGFloat(mode.pixelWidth) / CGFloat(mode.width))
     }
 
     private func preferredDisplay(in content: SCShareableContent) -> SCDisplay? {
         guard !content.displays.isEmpty else { return nil }
-        if let mainScreen = NSScreen.main,
-           let mainDisplayID = mainScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
-           let matchingDisplay = content.displays.first(where: { $0.displayID == mainDisplayID }) {
+        // Prefer the display under the pointer (where the user is working).
+        // CGEvent/CGGetDisplaysWithPoint are safe off the main thread, unlike NSScreen.main.
+        if let pointer = CGEvent(source: nil)?.location {
+            var displayID: CGDirectDisplayID = 0
+            var count: UInt32 = 0
+            if CGGetDisplaysWithPoint(pointer, 1, &displayID, &count) == .success, count > 0,
+               let matchingDisplay = content.displays.first(where: { $0.displayID == displayID }) {
+                return matchingDisplay
+            }
+        }
+        if let matchingDisplay = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) {
             return matchingDisplay
         }
         return content.displays.first

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 final class AllInOneHUDPanel {
-    private var panel: NSPanel?
+    private var panel: AllInOneHUDNSPanel?
     private var observerToken: NSObjectProtocol?
 
     init() {
@@ -22,8 +22,9 @@ final class AllInOneHUDPanel {
     }
 
     func show() {
-        if let existing = panel {
-            existing.makeKeyAndOrderFront(nil)
+        if panel != nil {
+            // The HUD hotkey/menu item toggles: a second press dismisses it.
+            dismiss()
             return
         }
 
@@ -44,12 +45,20 @@ final class AllInOneHUDPanel {
         let panelX = screen.frame.midX - panelWidth / 2
         let panelY = screen.visibleFrame.minY + 40
 
-        let newPanel = NSPanel(
+        let newPanel = AllInOneHUDNSPanel(
             contentRect: NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight),
+            // No .closable: a traffic-light button would overlap the first mode
+            // button. Dismiss with Escape or by toggling the HUD hotkey/menu item.
             styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
             backing: .buffered,
             defer: true
         )
+        newPanel.isReleasedWhenClosed = false
+        // Escape (and any close) routes through dismiss() so `panel` never
+        // points at a closed window.
+        newPanel.onCancel = { [weak self] in
+            self?.dismiss()
+        }
         newPanel.level = .floating
         newPanel.isFloatingPanel = true
         newPanel.hidesOnDeactivate = false
@@ -65,7 +74,38 @@ final class AllInOneHUDPanel {
     }
 
     private func dismiss() {
-        panel?.orderOut(nil)
-        panel = nil
+        guard let panel else { return }
+        self.panel = nil
+        panel.onCancel = nil
+        panel.orderOut(nil)
+    }
+}
+
+private final class AllInOneHUDNSPanel: NSPanel {
+    var onCancel: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Escape
+            onCancel?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
+    override func performClose(_ sender: Any?) {
+        onCancel?()
+    }
+
+    override func close() {
+        // Hand off to the owner so it drops its reference.
+        if let onCancel {
+            onCancel()
+        } else {
+            super.close()
+        }
     }
 }

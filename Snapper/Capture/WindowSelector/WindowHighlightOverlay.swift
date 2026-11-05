@@ -8,6 +8,26 @@ final class WindowHighlightOverlay: NSView {
     private let borderColor = NSColor.systemBlue
     private let borderWidth: CGFloat = 2.0
 
+    override var acceptsFirstResponder: Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // Generates mouse-moved events for the controller's local monitor even
+        // before the overlay window becomes key.
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.activeAlways, .mouseMoved, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let context = NSGraphicsContext.current?.cgContext,

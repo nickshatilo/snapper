@@ -18,6 +18,9 @@ final class CanvasState {
     var selectedAnnotationID: UUID?
     var selectedAnnotationIDs: Set<UUID> = []
     let undoManager = UndoRedoManager()
+    /// Installed by the canvas view so exporters can commit an in-progress
+    /// inline text edit before rendering.
+    @ObservationIgnored var pendingEditCommitHandler: (() -> Void)?
 
     var imageWidth: Int { baseImage.width }
     var imageHeight: Int { baseImage.height }
@@ -27,20 +30,55 @@ final class CanvasState {
         self.isOCRProcessing = false
     }
 
+    /// Commits any in-progress edit (e.g. inline text) so the model matches
+    /// what the user sees. Call before exporting.
+    func commitPendingEdits() {
+        pendingEditCommitHandler?()
+    }
+
     func addAnnotation(_ annotation: any Annotation) {
         annotations.append(annotation)
         undoManager.recordAdd(annotation: annotation, state: self)
     }
 
     func removeAnnotation(id: UUID) {
-        if let idx = annotations.firstIndex(where: { $0.id == id }) {
-            let annotation = annotations.remove(at: idx)
-            selectedAnnotationIDs.remove(id)
-            if selectedAnnotationID == id {
-                selectedAnnotationID = selectedAnnotationIDs.first
-            }
-            undoManager.recordRemove(annotation: annotation, state: self)
+        removeAnnotations(ids: [id])
+    }
+
+    /// Removes the given annotations as a single undo step; undo restores
+    /// each one at its original stacking position.
+    func removeAnnotations(ids: Set<UUID>) {
+        let indices = annotations.indices
+            .filter { ids.contains(annotations[$0].id) }
+            .sorted(by: >)
+        guard !indices.isEmpty else { return }
+
+        // Remove from the top down so each recorded index is valid at the
+        // moment of removal; undo re-inserts in reverse order.
+        var removals: [(annotation: any Annotation, index: Int)] = []
+        for index in indices {
+            removals.append((annotations.remove(at: index), index))
         }
+
+        selectedAnnotationIDs.subtract(ids)
+        if let selectedAnnotationID, ids.contains(selectedAnnotationID) {
+            self.selectedAnnotationID = selectedAnnotationIDs.first
+        }
+        undoManager.recordRemovals(removals, state: self)
+    }
+
+    /// Replaces several annotations as one undo step. Calls sharing a
+    /// `coalescingKey` in quick succession (a slider drag, a colour-panel
+    /// session) collapse into a single entry.
+    func replaceAnnotations(_ updatedAnnotations: [any Annotation], coalescingKey: String?) {
+        var changes: [(old: any Annotation, new: any Annotation)] = []
+        for updated in updatedAnnotations {
+            guard let index = annotations.firstIndex(where: { $0.id == updated.id }) else { continue }
+            let previous = annotations[index].duplicate()
+            annotations[index] = updated
+            changes.append((previous, updated.duplicate()))
+        }
+        undoManager.recordModifications(changes, coalescingKey: coalescingKey, state: self)
     }
 
     func selectedAnnotation() -> (any Annotation)? {
@@ -98,39 +136,73 @@ final class CanvasState {
         return true
     }
 
+    /// Snapshots capture document state only. The crop rectangle is transient
+    /// crop-tool UI state; keeping it in history would let undo restore an
+    /// invisible crop that still clips every export.
     func makeSnapshot() -> Snapshot {
-        Snapshot(
+        let documentAnnotations = annotations.filter { !($0 is CropAnnotation) }
+        let documentIDs = Set(documentAnnotations.map(\.id))
+        let selectedID = selectedAnnotationID.flatMap { documentIDs.contains($0) ? $0 : nil }
+        return Snapshot(
             baseImage: baseImage,
-            annotations: annotations.map { $0.duplicate() },
-            selectedAnnotationID: selectedAnnotationID,
-            selectedAnnotationIDs: selectedAnnotationIDs
+            annotations: documentAnnotations.map { $0.duplicate() },
+            selectedAnnotationID: selectedID,
+            selectedAnnotationIDs: selectedAnnotationIDs.intersection(documentIDs)
         )
     }
 
     func restore(from snapshot: Snapshot) {
+        // Keep the live crop-tool rectangle (if any); it isn't part of history.
+        var liveCrops = annotations.filter { $0 is CropAnnotation }
+        if snapshot.baseImage.width != baseImage.width || snapshot.baseImage.height != baseImage.height {
+            // The live crop rect is in the current image's coordinates; when
+            // the image changes size, start over at the restored image's full
+            // bounds, as entering the crop tool fresh would.
+            let restoredBounds = CGRect(x: 0, y: 0, width: snapshot.baseImage.width, height: snapshot.baseImage.height)
+            liveCrops = liveCrops.map { crop in
+                let reset = CropAnnotation(id: crop.id, rect: restoredBounds)
+                reset.zOrder = crop.zOrder
+                reset.isVisible = crop.isVisible
+                return reset
+            }
+        }
         baseImage = snapshot.baseImage
-        annotations = snapshot.annotations.map { $0.duplicate() }
+        annotations = snapshot.annotations.map { $0.duplicate() } + liveCrops
         selectedAnnotationID = snapshot.selectedAnnotationID
         selectedAnnotationIDs = snapshot.selectedAnnotationIDs
+    }
+
+    /// The active crop rectangle snapped to whole pixels and clamped to the
+    /// image, or nil when there is no usable crop. Snapping avoids
+    /// resampling (softening) the whole image on a fractional offset.
+    func activeCropPixelRect() -> CGRect? {
+        guard let rect = annotations.compactMap({ $0 as? CropAnnotation }).last?.rect else { return nil }
+        return Self.pixelAlignedCropRect(rect, imageWidth: baseImage.width, imageHeight: baseImage.height)
+    }
+
+    static func pixelAlignedCropRect(_ rect: CGRect, imageWidth: Int, imageHeight: Int) -> CGRect? {
+        let standardized = rect.standardized
+        guard standardized.minX.isFinite, standardized.minY.isFinite,
+              standardized.maxX.isFinite, standardized.maxY.isFinite else { return nil }
+        let minX = min(max(standardized.minX.rounded(), 0), CGFloat(imageWidth))
+        let minY = min(max(standardized.minY.rounded(), 0), CGFloat(imageHeight))
+        let maxX = min(max(standardized.maxX.rounded(), 0), CGFloat(imageWidth))
+        let maxY = min(max(standardized.maxY.rounded(), 0), CGFloat(imageHeight))
+        let aligned = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        guard aligned.width > 1, aligned.height > 1 else { return nil }
+        return aligned
     }
 
     @discardableResult
     func applyActiveCrop() -> Bool {
         let oldSnapshot = makeSnapshot()
         let imageBounds = CGRect(x: 0, y: 0, width: baseImage.width, height: baseImage.height)
-        guard let cropRect = annotations
-            .compactMap({ $0 as? CropAnnotation })
-            .last?
-            .rect
-            .standardized
-            .intersection(imageBounds),
-            cropRect.width > 1,
-            cropRect.height > 1 else {
+        guard let cropRect = activeCropPixelRect() else {
             return false
         }
 
-        let outputWidth = max(1, Int(cropRect.width.rounded()))
-        let outputHeight = max(1, Int(cropRect.height.rounded()))
+        let outputWidth = Int(cropRect.width)
+        let outputHeight = Int(cropRect.height)
 
         guard let context = CGContext(
             data: nil,
@@ -204,19 +276,7 @@ final class CanvasState {
 
     func renderFinalImage() -> CGImage? {
         let imageBounds = CGRect(x: 0, y: 0, width: baseImage.width, height: baseImage.height)
-        let activeCropRect = annotations
-            .compactMap { $0 as? CropAnnotation }
-            .last?
-            .rect
-            .standardized
-            .intersection(imageBounds)
-
-        let exportRect: CGRect
-        if let cropRect = activeCropRect, cropRect.width > 1, cropRect.height > 1 {
-            exportRect = cropRect
-        } else {
-            exportRect = imageBounds
-        }
+        let exportRect = activeCropPixelRect() ?? imageBounds
 
         let outputWidth = max(1, Int(exportRect.width.rounded()))
         let outputHeight = max(1, Int(exportRect.height.rounded()))

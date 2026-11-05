@@ -3,6 +3,8 @@ import AppKit
 struct AreaSelectionResult {
     let rect: CGRect
     let frozenImage: CGImage?
+    /// Focus to hand back once the capture is done (the selector activated Snapper).
+    let focusRestorer: FocusRestorer?
 }
 
 struct FrozenScreenSnapshot {
@@ -32,7 +34,7 @@ struct FrozenScreenSnapshot {
             height: outputHeight,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: ImageUtils.outputColorSpace(for: intersecting.map(\.image)),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
 
@@ -74,8 +76,12 @@ final class AreaSelectorWindowController {
     private var selectionStartInScreen: NSPoint?
     private var selectionCurrentInScreen: NSPoint?
     private let completion: (AreaSelectionResult?) -> Void
+    /// Screen contents captured before the overlays appear: drawn as the frozen
+    /// backdrop when freezing, and the magnifier's pixel source either way.
     private var frozenSnapshot: FrozenScreenSnapshot?
+    private var freezeScreen = false
     private var retinaScale = true
+    private var focusRestorer: FocusRestorer?
 
     init(completion: @escaping (AreaSelectionResult?) -> Void) {
         self.completion = completion
@@ -83,8 +89,10 @@ final class AreaSelectorWindowController {
 
     func show(freezeScreen: Bool, showMagnifier: Bool = false, retinaScale: Bool = true) {
         didFinish = false
+        self.freezeScreen = freezeScreen
         self.retinaScale = retinaScale
-        frozenSnapshot = freezeScreen ? captureSnapshot() : nil
+        focusRestorer = FocusRestorer.captureCurrentFocus()
+        frozenSnapshot = (freezeScreen || showMagnifier) ? captureSnapshot() : nil
         installKeyMonitor()
         // Delay activation until the current event cycle finishes (for menu-triggered captures).
         DispatchQueue.main.async { [weak self] in
@@ -111,7 +119,9 @@ final class AreaSelectorWindowController {
 
             let overlayView = AreaSelectorOverlayView(frame: NSRect(origin: .zero, size: screen.frame.size))
             overlayView.showsMagnifier = showMagnifier
-            overlayView.frozenImage = frozenSnapshot?.displays.first(where: { $0.frame == screen.frame })?.image
+            let screenSnapshot = frozenSnapshot?.displays.first(where: { $0.frame == screen.frame })
+            overlayView.frozenImage = freezeScreen ? screenSnapshot?.image : nil
+            overlayView.magnifierSource = screenSnapshot
             let overlayID = ObjectIdentifier(overlayView)
             overlayScreenFrames[overlayID] = screen.frame
             overlayScreenScales[overlayID] = max(1.0, screen.backingScaleFactor)
@@ -205,8 +215,14 @@ final class AreaSelectorWindowController {
             clearSelectionAcrossOverlays()
 
             if selectedRect.width > 5, selectedRect.height > 5 {
-                let frozenImage = frozenSnapshot?.image(for: selectedRect, retinaScale: retinaScale)
-                finish(with: AreaSelectionResult(rect: selectedRect, frozenImage: frozenImage))
+                let frozenImage = freezeScreen
+                    ? frozenSnapshot?.image(for: selectedRect, retinaScale: retinaScale)
+                    : nil
+                finish(with: AreaSelectionResult(
+                    rect: selectedRect,
+                    frozenImage: frozenImage,
+                    focusRestorer: focusRestorer
+                ))
             }
             return true
         case .mouseMoved:
@@ -290,6 +306,9 @@ final class AreaSelectorWindowController {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.close()
+            if result == nil {
+                self.focusRestorer?.restore()
+            }
             self.completion(result)
         }
     }

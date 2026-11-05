@@ -1,7 +1,9 @@
 import AppKit
 
 final class CanvasNSView: NSView, NSTextFieldDelegate {
-    var canvasState: CanvasState
+    var canvasState: CanvasState {
+        didSet { installPendingEditCommitHandler() }
+    }
     var toolManager: ToolManager
 
     private var trackingArea: NSTrackingArea?
@@ -33,7 +35,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     private struct AnnotationEditSession {
         enum Mode {
             case move([UUID: any Annotation])
-            case resize(AnnotationResizeHandle)
+            case resize(AnnotationResizeHandle, rotation: CGFloat)
             case rotate(
                 initialPointerAngle: CGFloat,
                 originalRotationDegrees: CGFloat,
@@ -52,12 +54,26 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     private struct SingleSelectionContext {
         let id: UUID
         let annotation: any Annotation
+        /// Unrotated selection frame; drawn and hit-tested rotated by `rotation`
+        /// (radians) about its centre.
         let frame: CGRect
+        let rotation: CGFloat
+
+        var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
+
+        /// Converts an image-space point into the frame's unrotated space.
+        func localPoint(_ point: CGPoint) -> CGPoint {
+            guard rotation != 0 else { return point }
+            return AnnotationGeometry.rotate(point: point, around: center, by: -rotation)
+        }
     }
 
     private struct InlineTextEditSession {
         let annotationID: UUID
         let textField: InlineTextField
+        /// True when the annotation was just placed by the text tool and still
+        /// holds the placeholder; abandoning the edit removes it entirely.
+        let isNewlyCreated: Bool
     }
 
     private final class InlineTextField: NSTextField {
@@ -99,6 +115,13 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         layer?.masksToBounds = true
         viewportImageSize = CGSize(width: canvasState.imageWidth, height: canvasState.imageHeight)
+        installPendingEditCommitHandler()
+    }
+
+    private func installPendingEditCommitHandler() {
+        canvasState.pendingEditCommitHandler = { [weak self] in
+            self?.finishInlineTextEditing(commit: true)
+        }
     }
 
     @available(*, unavailable)
@@ -281,12 +304,27 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
                 return
             }
 
-            if beginAnnotationInteraction(at: point, hitAnnotation: hitAnnotation) {
-                toolManager.currentTool = .textSelect
-                clearTextSelection()
+            // Clicking existing text with the Text tool edits it rather than
+            // stacking a new placeholder on top.
+            if toolManager.currentTool == .text,
+               let textAnnotation = hitAnnotation as? TextAnnotation {
+                setSelectedAnnotationIDs([textAnnotation.id], primaryID: textAnnotation.id)
+                beginInlineTextEditing(for: textAnnotation)
                 needsDisplay = true
                 return
             }
+
+            // The still-selected annotation's resize/rotate handles stay
+            // grabbable with any tool (tools like pencil/text/counter don't
+            // auto-switch to selection after committing).
+            if beginHandleInteractionIfNeeded(at: point) {
+                needsDisplay = true
+                return
+            }
+
+            // Otherwise drawing tools always draw: a press over an existing
+            // annotation's body must not turn into a move (only the
+            // selection tool moves).
         }
 
         if toolManager.currentTool == .textSelect {
@@ -353,10 +391,10 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             setSelectedAnnotationIDs([selectedID], primaryID: selectedID)
         }
 
-        if toolManager.currentTool == .text {
-            if let textAnnotation = topmostAnnotation(at: point) as? TextAnnotation {
-                beginInlineTextEditing(for: textAnnotation)
-            }
+        if toolManager.currentTool == .text,
+           let createdID = canvasState.selectedAnnotationID,
+           let textAnnotation = annotation(with: createdID) as? TextAnnotation {
+            beginInlineTextEditing(for: textAnnotation, isNewlyCreated: true)
         }
         needsDisplay = true
     }
@@ -400,6 +438,8 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         }
 
         let point = imagePoint(from: viewPoint)
+        // A handle drag started from a drawing tool.
+        if updateAnnotationInteractionIfNeeded(at: point) { return }
         toolManager.mouseDragged(to: point, canvasState: canvasState)
         needsDisplay = true
     }
@@ -442,6 +482,10 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
 
         let committedFromTool = toolManager.currentTool
         let point = imagePoint(from: viewPoint)
+        if endAnnotationInteractionIfNeeded(at: point) {
+            isDragging = false
+            return
+        }
         let committedAnnotationID = toolManager.mouseUp(at: point, canvasState: canvasState)
         if let committedAnnotationID {
             setSelectedAnnotationIDs([committedAnnotationID], primaryID: committedAnnotationID)
@@ -555,9 +599,13 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
                 return
             }
 
-            for selectedID in selectedIDs {
-                canvasState.removeAnnotation(id: selectedID)
+            // The crop rectangle is transient tool state, not history.
+            let cropIDs = Set(selectedIDs.filter { annotation(with: $0) is CropAnnotation })
+            if !cropIDs.isEmpty {
+                canvasState.annotations.removeAll { cropIDs.contains($0.id) }
             }
+            // One undo step restores the whole deleted selection in place.
+            canvasState.removeAnnotations(ids: selectedIDs.subtracting(cropIDs))
             setSelectedAnnotationIDs([], primaryID: nil)
             annotationEditSession = nil
             needsDisplay = true
@@ -750,6 +798,15 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         return true
     }
 
+    /// Starts a resize/rotate drag if `point` is on a handle of the single
+    /// selected annotation. Never starts a body move.
+    private func beginHandleInteractionIfNeeded(at point: CGPoint) -> Bool {
+        synchronizeAnnotationSelectionState()
+        guard let selection = singleSelectionContext() else { return false }
+        return beginRotationInteractionIfNeeded(at: point, selection: selection)
+            || beginResizeInteractionIfNeeded(at: point, selection: selection)
+    }
+
     @discardableResult
     private func updateAnnotationInteractionIfNeeded(at point: CGPoint) -> Bool {
         guard annotationEditSession != nil else { return false }
@@ -777,12 +834,23 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
                 let transformed = AnnotationGeometry.translated(original, by: delta)
                 applyTransformedAnnotation(transformed, preserving: original)
             }
-        case .resize(let handle):
-            let resizedRect = AnnotationGeometry.rectForResize(
+        case .resize(let handle, let rotation):
+            // Resize in the shape's unrotated space, then shift the result so
+            // the opposite edge/corner stays put on screen.
+            let originalCenter = CGPoint(x: session.originalFrame.midX, y: session.originalFrame.midY)
+            let localPoint = rotation == 0
+                ? point
+                : AnnotationGeometry.rotate(point: point, around: originalCenter, by: -rotation)
+            var resizedRect = AnnotationGeometry.rectForResize(
                 handle: handle,
                 originalFrame: session.originalFrame,
-                currentPoint: point
+                currentPoint: localPoint
             )
+            if rotation != 0 {
+                let localCenter = CGPoint(x: resizedRect.midX, y: resizedRect.midY)
+                let worldCenter = AnnotationGeometry.rotate(point: localCenter, around: originalCenter, by: rotation)
+                resizedRect = resizedRect.offsetBy(dx: worldCenter.x - localCenter.x, dy: worldCenter.y - localCenter.y)
+            }
             let transformed = AnnotationGeometry.resized(
                 session.originalAnnotation,
                 from: session.originalFrame,
@@ -804,10 +872,17 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
 
         switch session.mode {
         case .move(let originals):
+            // A multi-selection move is one undo step.
+            var changes: [(old: any Annotation, new: any Annotation)] = []
             for (annotationID, originalAnnotation) in originals {
-                guard let finalAnnotation = annotation(with: annotationID) else { continue }
-                recordModifyIfGeometryChanged(from: originalAnnotation, to: finalAnnotation)
+                guard let finalAnnotation = annotation(with: annotationID),
+                      !(finalAnnotation is CropAnnotation),
+                      annotationGeometrySignature(originalAnnotation) != annotationGeometrySignature(finalAnnotation) else {
+                    continue
+                }
+                changes.append((originalAnnotation, finalAnnotation.duplicate()))
             }
+            canvasState.undoManager.recordModifications(changes, coalescingKey: nil, state: canvasState)
 
         case .resize, .rotate:
             guard let finalAnnotation = annotation(with: session.annotationID) else { return }
@@ -824,7 +899,8 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         return SingleSelectionContext(
             id: selectedID,
             annotation: selectedAnnotation,
-            frame: AnnotationGeometry.editableFrame(for: selectedAnnotation).standardized
+            frame: AnnotationGeometry.selectionFrame(for: selectedAnnotation).standardized,
+            rotation: AnnotationGeometry.selectionRotationRadians(for: selectedAnnotation)
         )
     }
 
@@ -833,11 +909,11 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         selection: SingleSelectionContext
     ) -> Bool {
         guard AnnotationGeometry.supportsRotation(selection.annotation),
-              let anchorCorner = rotationHandleCorner(at: point, for: selection.frame) else {
+              let anchorCorner = rotationHandleCorner(at: selection.localPoint(point), for: selection.frame) else {
             return false
         }
 
-        let center = CGPoint(x: selection.frame.midX, y: selection.frame.midY)
+        let center = selection.center
         annotationEditSession = AnnotationEditSession(
             annotationID: selection.id,
             originalAnnotation: selection.annotation.duplicate(),
@@ -858,7 +934,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         selection: SingleSelectionContext
     ) -> Bool {
         guard AnnotationGeometry.supportsResize(selection.annotation),
-              let handle = resizeHandle(at: point, for: selection.frame) else {
+              let handle = resizeHandle(at: selection.localPoint(point), for: selection.frame) else {
             return false
         }
 
@@ -867,7 +943,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             originalAnnotation: selection.annotation.duplicate(),
             originalFrame: selection.frame,
             startPoint: point,
-            mode: .resize(handle)
+            mode: .resize(handle, rotation: selection.rotation)
         )
         return true
     }
@@ -883,6 +959,9 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     }
 
     private func recordModifyIfGeometryChanged(from oldAnnotation: any Annotation, to newAnnotation: any Annotation) {
+        // Crop-rect adjustments are transient crop-tool state; recording them
+        // would let undo resurrect a hidden crop after leaving the tool.
+        guard !(newAnnotation is CropAnnotation) else { return }
         let oldSignature = annotationGeometrySignature(oldAnnotation)
         let newSignature = annotationGeometrySignature(newAnnotation)
         guard oldSignature != newSignature else { return }
@@ -1038,7 +1117,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         return ids.first
     }
 
-    private func beginInlineTextEditing(for annotation: TextAnnotation) {
+    private func beginInlineTextEditing(for annotation: TextAnnotation, isNewlyCreated: Bool = false) {
         finishInlineTextEditing(commit: true)
         setSelectedAnnotationIDs([annotation.id], primaryID: annotation.id)
 
@@ -1063,7 +1142,11 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         }
 
         addSubview(textField)
-        inlineTextEditSession = InlineTextEditSession(annotationID: annotation.id, textField: textField)
+        inlineTextEditSession = InlineTextEditSession(
+            annotationID: annotation.id,
+            textField: textField,
+            isNewlyCreated: isNewlyCreated
+        )
         window?.makeFirstResponder(textField)
         DispatchQueue.main.async {
             if let editor = textField.currentEditor() as? NSTextView {
@@ -1094,21 +1177,53 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         suppressInlineTextEndHandling = false
 
         textField.removeFromSuperview()
+        defer { needsDisplay = true }
 
-        guard commit,
-              let existing = annotation(with: session.annotationID) as? TextAnnotation else {
-            needsDisplay = true
+        guard let existing = annotation(with: session.annotationID) as? TextAnnotation else {
+            return
+        }
+
+        if session.isNewlyCreated {
+            // A freshly placed box that is cancelled, emptied, or left as the
+            // placeholder is abandoned rather than leaving "Text" in the image.
+            let isAbandoned = !commit
+                || !hasNonWhitespaceContent
+                || (normalizedText == TextAnnotation.placeholderText
+                    && existing.text == TextAnnotation.placeholderText)
+            if isAbandoned {
+                discardNewTextAnnotation(id: existing.id)
+                return
+            }
+
+            guard existing.text != normalizedText else { return }
+            let updated = cloneTextAnnotation(existing, text: normalizedText)
+            let previous = cloneTextAnnotation(existing)
+            replaceAnnotation(updated)
+            setSelectedAnnotationIDs([updated.id], primaryID: updated.id)
+            // Fold the initial text into the creation step when possible.
+            if !canvasState.undoManager.replaceLastAdd(with: updated) {
+                canvasState.undoManager.recordModify(
+                    oldAnnotation: previous,
+                    newAnnotation: updated.duplicate(),
+                    state: canvasState
+                )
+            }
+            return
+        }
+
+        guard commit else { return }
+
+        if !hasNonWhitespaceContent {
+            // Clearing an existing text annotation deletes it (undoable).
+            canvasState.removeAnnotation(id: existing.id)
+            setSelectedAnnotationIDs([], primaryID: nil)
             return
         }
 
         let previous = cloneTextAnnotation(existing)
-        let finalText = hasNonWhitespaceContent ? normalizedText : existing.text
-        guard previous.text != finalText else {
-            needsDisplay = true
-            return
-        }
+        guard previous.text != normalizedText else { return }
 
-        let updated = cloneTextAnnotation(existing, text: finalText)
+        let updated = cloneTextAnnotation(existing, text: normalizedText)
         replaceAnnotation(updated)
         canvasState.selectedAnnotationID = updated.id
         canvasState.selectedAnnotationIDs = [updated.id]
@@ -1117,7 +1232,24 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             newAnnotation: updated.duplicate(),
             state: canvasState
         )
-        needsDisplay = true
+    }
+
+    private func discardNewTextAnnotation(id: UUID) {
+        if canvasState.undoManager.discardLastAdd(of: id) {
+            canvasState.annotations.removeAll { $0.id == id }
+            canvasState.selectedAnnotationIDs.remove(id)
+            if canvasState.selectedAnnotationID == id {
+                canvasState.selectedAnnotationID = nil
+            }
+        } else {
+            // Something else was recorded since creation; remove undoably.
+            canvasState.removeAnnotation(id: id)
+        }
+        selectedAnnotationIDs.remove(id)
+        canvasState.selectedAnnotationIDs = selectedAnnotationIDs
+        if canvasState.selectedAnnotationID == nil || canvasState.selectedAnnotationID == id {
+            canvasState.selectedAnnotationID = selectedAnnotationIDs.first
+        }
     }
 
     private func updateInlineTextEditorFrameAndStyle() {
@@ -1322,6 +1454,8 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             return
         }
 
+        // Handles live in the shape's rotated frame.
+        applyRotation(selection.rotation, around: selection.center, in: context)
         drawResizeHandlesIfNeeded(for: selection, zoom: zoom, accent: accent, in: context)
         drawRotationHandleIfNeeded(for: selection, zoom: zoom, accent: accent, in: context)
 
@@ -1343,9 +1477,20 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
             return
         }
 
-        let frame = AnnotationGeometry.editableFrame(for: annotation).standardized
+        let frame = AnnotationGeometry.selectionFrame(for: annotation).standardized
         guard frame.width > 0, frame.height > 0 else { return }
+        let rotation = AnnotationGeometry.selectionRotationRadians(for: annotation)
+        context.saveGState()
+        applyRotation(rotation, around: CGPoint(x: frame.midX, y: frame.midY), in: context)
         context.stroke(frame)
+        context.restoreGState()
+    }
+
+    private func applyRotation(_ rotation: CGFloat, around center: CGPoint, in context: CGContext) {
+        guard rotation != 0 else { return }
+        context.translateBy(x: center.x, y: center.y)
+        context.rotate(by: rotation)
+        context.translateBy(x: -center.x, y: -center.y)
     }
 
     private func drawResizeHandlesIfNeeded(
@@ -1373,7 +1518,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         in context: CGContext
     ) {
         guard AnnotationGeometry.supportsRotation(selection.annotation),
-              let rotationHandle = visibleRotationHandle(for: selection.id, frame: selection.frame) else {
+              let rotationHandle = visibleRotationHandle(for: selection) else {
             return
         }
 
@@ -1407,21 +1552,24 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         return nil
     }
 
-    private func visibleRotationHandle(for annotationID: UUID, frame: CGRect) -> (rect: CGRect, isHovering: Bool)? {
+    private func visibleRotationHandle(for selection: SingleSelectionContext) -> (rect: CGRect, isHovering: Bool)? {
+        let annotationID = selection.id
+        let frame = selection.frame
+        let hoverPoint = currentMouseImagePoint().map { selection.localPoint($0) }
         if let session = annotationEditSession,
            session.annotationID == annotationID,
            case .rotate(_, _, _, let corner) = session.mode {
             return (rotationHandleRect(for: frame, corner: corner, includeExpandedHitArea: false), true)
         }
 
-        if let hoveredRotationCorner = hoveredRotationHandleCorner(for: frame) {
+        if let hoveredRotationCorner = hoveredRotationHandleCorner(at: hoverPoint, for: frame) {
             return (
                 rotationHandleRect(for: frame, corner: hoveredRotationCorner, includeExpandedHitArea: false),
                 true
             )
         }
 
-        if let hoveredCorner = hoveredResizeCorner(for: frame) {
+        if let hoveredCorner = hoveredResizeCorner(at: hoverPoint, for: frame) {
             return (
                 rotationHandleRect(for: frame, corner: hoveredCorner, includeExpandedHitArea: false),
                 false
@@ -1502,8 +1650,8 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         context.restoreGState()
     }
 
-    private func hoveredResizeCorner(for frame: CGRect) -> AnnotationResizeHandle? {
-        guard let point = currentMouseImagePoint() else { return nil }
+    private func hoveredResizeCorner(at point: CGPoint?, for frame: CGRect) -> AnnotationResizeHandle? {
+        guard let point else { return nil }
         let zoom = max(canvasState.zoomLevel, 0.1)
         let hoverSize = max(28 / zoom, 14)
         for corner in rotationHandleCorners {
@@ -1514,8 +1662,8 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
         return nil
     }
 
-    private func hoveredRotationHandleCorner(for frame: CGRect) -> AnnotationResizeHandle? {
-        guard let point = currentMouseImagePoint() else { return nil }
+    private func hoveredRotationHandleCorner(at point: CGPoint?, for frame: CGRect) -> AnnotationResizeHandle? {
+        guard let point else { return nil }
         for corner in rotationHandleCorners {
             if rotationHandleRect(for: frame, corner: corner, includeExpandedHitArea: true).contains(point) {
                 return corner
@@ -1672,23 +1820,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     }
 
     private func activeCropPreviewRect() -> CGRect? {
-        let imageRect = CGRect(
-            x: 0,
-            y: 0,
-            width: CGFloat(canvasState.imageWidth),
-            height: CGFloat(canvasState.imageHeight)
-        )
-        guard let rect = canvasState.annotations
-            .compactMap({ $0 as? CropAnnotation })
-            .last?
-            .rect
-            .standardized
-            .intersection(imageRect),
-            rect.width > 1,
-            rect.height > 1 else {
-            return nil
-        }
-        return rect
+        canvasState.activeCropPixelRect()
     }
 
     private func syncTextSelectionState() {

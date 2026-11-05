@@ -37,12 +37,11 @@ struct CaptureThumbnailView: View {
                 isHovering = hovering
             }
         }
+        // SwiftUI's onDrag reports no drop result, and removing the capture
+        // when the drag starts lost it on a cancelled drag (and tore down the
+        // drag source mid-session). Keep it; the user dismisses it.
         .onDrag {
-            let provider = dragItemProvider()
-            DispatchQueue.main.async {
-                manager.removeCapture(capture.id)
-            }
-            return provider
+            dragItemProvider()
         }
         .transition(
             .asymmetric(

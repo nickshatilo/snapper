@@ -4,6 +4,7 @@ final class PinnedScreenshotManager {
     private var panels: [UUID: PinnedScreenshotPanel] = [:]
     private let appState: AppState
     private var observerTokens: [NSObjectProtocol] = []
+    private var persistWorkItem: DispatchWorkItem?
 
     init(appState: AppState) {
         self.appState = appState
@@ -68,9 +69,10 @@ final class PinnedScreenshotManager {
         persist: Bool = true
     ) {
         let pointScale = max(1, scale)
-        let defaultSize = NSSize(
-            width: min(CGFloat(image.width) / pointScale / 2, 400),
-            height: min(CGFloat(image.height) / pointScale / 2, 300)
+        let defaultSize = PinnedScreenshotPanel.defaultSize(
+            forPixelWidth: image.width,
+            pixelHeight: image.height,
+            scale: pointScale
         )
         let panelFrame = frame ?? NSRect(
             x: (NSScreen.main?.frame.midX ?? 500) - defaultSize.width / 2,
@@ -84,9 +86,30 @@ final class PinnedScreenshotManager {
         panel.isLocked = locked
         panels[panel.imageID] = panel
         panel.makeKeyAndOrderFront(nil)
+        // Set after the initial frame/opacity so restoring doesn't persist
+        // half-restored state.
+        panel.onStateChange = { [weak self] in
+            self?.schedulePersist()
+        }
         if persist {
             persistState()
         }
+    }
+
+    /// Writes any pending pin state immediately (e.g. at quit).
+    func flushPendingPersist() {
+        guard persistWorkItem != nil else { return }
+        persistState()
+    }
+
+    /// Moves, resizes and opacity scrolls fire continuously; coalesce them.
+    private func schedulePersist() {
+        persistWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.persistState()
+        }
+        persistWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
     }
 
     private func applyDefaultOpacityToAllPanels() {
@@ -108,6 +131,8 @@ final class PinnedScreenshotManager {
     }
 
     private func persistState() {
+        persistWorkItem?.cancel()
+        persistWorkItem = nil
         var states: [[String: Any]] = []
         for (id, panel) in panels {
             if let directory = pinsDirectory {

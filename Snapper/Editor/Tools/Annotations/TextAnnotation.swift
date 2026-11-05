@@ -1,6 +1,9 @@
 import AppKit
 
 final class TextAnnotation: Annotation {
+    /// Default text a newly placed text annotation starts with.
+    static let placeholderText = "Text"
+
     let id: UUID
     let type: ToolType = .text
     var zOrder: Int = 0
@@ -19,6 +22,9 @@ final class TextAnnotation: Annotation {
     var boundingRect: CGRect {
         rotatedBounds(for: textContainerRect)
     }
+
+    /// Text box before rotation (rotation is about its centre).
+    var unrotatedFrame: CGRect { textContainerRect }
 
     init(
         id: UUID = UUID(),

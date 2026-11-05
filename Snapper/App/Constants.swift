@@ -13,7 +13,6 @@ enum Constants {
         static let imageFormat = "imageFormat"
         static let jpegQuality = "jpegQuality"
         static let filenamePattern = "filenamePattern"
-        static let showCrosshair = "showCrosshair"
         static let showMagnifier = "showMagnifier"
         static let freezeScreen = "freezeScreen"
         static let retina2x = "retina2x"
@@ -22,7 +21,6 @@ enum Constants {
         static let defaultPinnedOpacity = "defaultPinnedOpacity"
         static let pinnedScreenshots = "pinnedScreenshots"
         static let windowCaptureIncludeShadow = "windowCaptureIncludeShadow"
-        static let hideDesktopIcons = "hideDesktopIcons"
         static let hotkeyBindings = "hotkeyBindings"
     }
 

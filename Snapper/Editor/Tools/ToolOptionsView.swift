@@ -857,9 +857,14 @@ struct ToolOptionsView: View {
         fallback: @autoclosure @escaping () -> Value,
         get: @escaping ((any Annotation) -> Value?),
         set: @escaping ((any Annotation, Value) -> (any Annotation)?),
-        onSet: ((Value) -> Void)? = nil
+        onSet: ((Value) -> Void)? = nil,
+        undoSourceLine: UInt = #line
     ) -> Binding<Value> {
-        Binding(
+        // Each binding call site edits one property; its line identifies it so
+        // a continuous gesture on that control (slider drag, colour panel,
+        // typing) coalesces into one undo entry.
+        let undoKey = "options:\(undoSourceLine)"
+        return Binding(
             get: {
                 guard let selectedAnnotation = editableSelectedAnnotations.first else {
                     return fallback()
@@ -868,7 +873,7 @@ struct ToolOptionsView: View {
             },
             set: { newValue in
                 onSet?(newValue)
-                applyToEditableSelectedAnnotations { annotation in
+                applyToEditableSelectedAnnotations(undoKey: undoKey) { annotation in
                     set(annotation, newValue)
                 }
             }
@@ -876,23 +881,25 @@ struct ToolOptionsView: View {
     }
 
     private func applyToEditableSelectedAnnotations(
+        undoKey: String,
         _ transform: ((any Annotation) -> (any Annotation)?)
     ) {
         let annotations = editableSelectedAnnotations
         guard !annotations.isEmpty else { return }
 
         let primaryID = canvasState.selectedAnnotationID
-        var didApplyUpdate = false
+        var updatedAnnotations: [any Annotation] = []
 
         for source in annotations {
             guard let updated = transform(source) else { continue }
             updated.zOrder = source.zOrder
             updated.isVisible = source.isVisible
-            canvasState.replaceAnnotation(updated, recordUndo: true)
-            didApplyUpdate = true
+            updatedAnnotations.append(updated)
         }
 
-        guard didApplyUpdate else { return }
+        guard !updatedAnnotations.isEmpty else { return }
+        // One undo entry for the whole selection, coalesced across the gesture.
+        canvasState.replaceAnnotations(updatedAnnotations, coalescingKey: undoKey)
 
         let selectionIDs = Set(annotations.map { $0.id })
         canvasState.selectedAnnotationIDs = selectionIDs

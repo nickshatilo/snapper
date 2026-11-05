@@ -174,15 +174,29 @@ struct OnboardingView: View {
             Text("You're All Set!")
                 .font(.title)
                 .fontWeight(.bold)
-            Text("Snapper is ready. Use these shortcuts to capture:")
-                .foregroundStyle(.secondary)
+            if assignedShortcuts.isEmpty {
+                Text("Snapper is ready. Capture from the menu bar, or assign shortcuts in Settings.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Snapper is ready. Use these shortcuts to capture:")
+                    .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 8) {
-                shortcutRow("⌘⇧3", "Capture Fullscreen")
-                shortcutRow("⌘⇧4", "Capture Area")
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(assignedShortcuts, id: \.action) { item in
+                        shortcutRow(item.binding.displayString, item.action.displayName)
+                    }
+                }
+                .padding()
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             }
-            .padding()
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    /// The user's current bindings, in the same order as Settings.
+    private var assignedShortcuts: [(action: HotkeyAction, binding: HotkeyBinding)] {
+        HotkeyAction.allCases.compactMap { action in
+            appState.hotkeyBindings[action].map { (action: action, binding: $0) }
         }
     }
 
@@ -190,7 +204,7 @@ struct OnboardingView: View {
         HStack {
             Text(shortcut)
                 .font(.system(.body, design: .monospaced))
-                .frame(width: 60, alignment: .leading)
+                .frame(width: 90, alignment: .leading)
             Text(description)
                 .foregroundStyle(.secondary)
         }

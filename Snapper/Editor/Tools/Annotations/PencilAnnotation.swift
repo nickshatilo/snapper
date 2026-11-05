@@ -83,6 +83,11 @@ final class PencilAnnotation: Annotation {
         return result
     }
 
+    func hitTest(point: CGPoint) -> Bool {
+        AnnotationGeometry.distance(from: point, toPolyline: points)
+            <= strokeWidth / 2 + AnnotationGeometry.strokeHitTolerance
+    }
+
     func duplicate() -> any Annotation {
         PencilAnnotation(
             id: id,

@@ -16,9 +16,19 @@ enum TextRecognitionService {
             let ocrWidth = CGFloat(ocrImage.width)
             let ocrHeight = CGFloat(ocrImage.height)
 
+            // On failure Vision both calls the completion handler with the error
+            // and throws from `perform`; resuming twice would trap. `perform` runs
+            // the handler synchronously on this thread, so a plain flag suffices.
+            var didResume = false
+            func resume(_ result: Result<[OCRTextBlock], Error>) {
+                guard !didResume else { return }
+                didResume = true
+                continuation.resume(with: result)
+            }
+
             let request = VNRecognizeTextRequest { request, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    resume(.failure(error))
                     return
                 }
 
@@ -37,7 +47,7 @@ enum TextRecognitionService {
                         return lhs.imageRect.minX < rhs.imageRect.minX
                     }
 
-                continuation.resume(returning: Array(recognizedBlocks.prefix(2000)))
+                resume(.success(Array(recognizedBlocks.prefix(2000))))
             }
 
             request.recognitionLevel = .accurate
@@ -49,7 +59,11 @@ enum TextRecognitionService {
             do {
                 try handler.perform([request])
             } catch {
-                continuation.resume(throwing: error)
+                resume(.failure(error))
+            }
+            if !didResume {
+                // Defensive: never leave the caller suspended forever.
+                resume(.success([]))
             }
         }
     }
