@@ -73,6 +73,9 @@ final class AreaSelectorWindowController {
     private var localKeyMonitor: Any?
     private var localMouseMonitor: Any?
     private var didFinish = false
+    /// Set by `close()` so a snapshot still in flight never presents overlays
+    /// for a selector that has already been torn down.
+    private var didClose = false
     private var selectionStartInScreen: NSPoint?
     private var selectionCurrentInScreen: NSPoint?
     private let completion: (AreaSelectionResult?) -> Void
@@ -82,6 +85,7 @@ final class AreaSelectorWindowController {
     private var freezeScreen = false
     private var retinaScale = true
     private var focusRestorer: FocusRestorer?
+    private let captureService = ScreenCaptureService()
 
     init(completion: @escaping (AreaSelectionResult?) -> Void) {
         self.completion = completion
@@ -89,14 +93,36 @@ final class AreaSelectorWindowController {
 
     func show(freezeScreen: Bool, showMagnifier: Bool = false, retinaScale: Bool = true) {
         didFinish = false
+        didClose = false
         self.freezeScreen = freezeScreen
         self.retinaScale = retinaScale
         focusRestorer = FocusRestorer.captureCurrentFocus()
-        frozenSnapshot = (freezeScreen || showMagnifier) ? captureSnapshot() : nil
+        frozenSnapshot = nil
         installKeyMonitor()
+
+        guard freezeScreen || showMagnifier else {
+            presentOverlays(showMagnifier: showMagnifier)
+            return
+        }
+
+        // Snapshot first, present after: once Snapper activates, the user's
+        // window is drawn in its inactive state, and that is what the frozen
+        // frame would show.
+        Task { @MainActor [weak self] in
+            guard let captureService = self?.captureService else { return }
+            // Without a snapshot (e.g. no Screen Recording permission) the
+            // selector still works, just unfrozen and without a magnifier.
+            let snapshots = try? await captureService.captureDisplaySnapshots()
+            guard let self, !self.didFinish, !self.didClose else { return }
+            self.frozenSnapshot = snapshots.flatMap { self.makeFrozenSnapshot(from: $0) }
+            self.presentOverlays(showMagnifier: showMagnifier)
+        }
+    }
+
+    private func presentOverlays(showMagnifier: Bool) {
         // Delay activation until the current event cycle finishes (for menu-triggered captures).
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.didFinish else { return }
+            guard let self, !self.didFinish, !self.didClose else { return }
             NSApp.activate(ignoringOtherApps: true)
         }
 
@@ -137,6 +163,7 @@ final class AreaSelectorWindowController {
     }
 
     func close() {
+        didClose = true
         if let localKeyMonitor {
             NSEvent.removeMonitor(localKeyMonitor)
             self.localKeyMonitor = nil
@@ -313,13 +340,15 @@ final class AreaSelectorWindowController {
         }
     }
 
-    private func captureSnapshot() -> FrozenScreenSnapshot? {
+    /// Pairs each screen with its display's snapshot. Main thread only: reads
+    /// `NSScreen` for the AppKit frames the overlays and magnifier work in.
+    private func makeFrozenSnapshot(from snapshots: [ScreenCaptureService.DisplaySnapshot]) -> FrozenScreenSnapshot? {
         let displays = NSScreen.screens.compactMap { screen -> FrozenScreenSnapshot.Display? in
             guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
-                  let image = CGDisplayCreateImage(displayID) else {
+                  let snapshot = snapshots.first(where: { $0.displayID == displayID }) else {
                 return nil
             }
-            return FrozenScreenSnapshot.Display(frame: screen.frame, image: image)
+            return FrozenScreenSnapshot.Display(frame: screen.frame, image: snapshot.image)
         }
         return displays.isEmpty ? nil : FrozenScreenSnapshot(displays: displays)
     }

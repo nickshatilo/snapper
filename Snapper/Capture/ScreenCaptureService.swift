@@ -25,47 +25,72 @@ final class ScreenCaptureService {
         let configuration: SCStreamConfiguration
     }
 
-    private var cachedContent: SCShareableContent?
-    private var cachedContentTimestamp: Date = .distantPast
-    private let contentCacheDuration: TimeInterval = 2.0
-
-    private func getCachedContent() async throws -> SCShareableContent {
-        let now = Date()
-        if let cached = cachedContent, now.timeIntervalSince(cachedContentTimestamp) < contentCacheDuration {
-            return cached
-        }
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        cachedContent = content
-        cachedContentTimestamp = now
-        return content
+    /// One display's contents at its native pixel density.
+    struct DisplaySnapshot {
+        let displayID: CGDirectDisplayID
+        let image: CGImage
     }
 
-    func captureDisplay(_ display: SCDisplay? = nil, retinaScale: Bool = true) async throws -> CGImage {
+    /// Snapper's own floating UI (Quick Access overlay, pins, HUDs, the timer
+    /// countdown, selection overlays) sits above the normal window level and
+    /// must never end up in a screenshot. Its regular windows (editor,
+    /// settings, history) are layer 0 and stay capturable like any other app's.
+    static func isOwnOverlayWindow(ownerPID: pid_t?, layer: Int, ownPID: pid_t) -> Bool {
+        ownerPID == ownPID && layer > 0
+    }
+
+    private func ownOverlayWindows(in content: SCShareableContent) -> [SCWindow] {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        return content.windows.filter {
+            Self.isOwnOverlayWindow(
+                ownerPID: $0.owningApplication?.processID,
+                layer: $0.windowLayer,
+                ownPID: ownPID
+            )
+        }
+    }
+
+    /// Always fetched fresh: the window list decides which overlays get
+    /// excluded, and a stale one would miss a panel that appeared since.
+    private func fetchShareableContent() async throws -> SCShareableContent {
+        try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    }
+
+    /// Captures every display separately at its native scale, e.g. as the
+    /// frozen backdrop for area selection.
+    func captureDisplaySnapshots() async throws -> [DisplaySnapshot] {
         try ensureScreenCapturePermission()
-        let content = try await getCachedContent()
-        let targetDisplay = display ?? preferredDisplay(in: content)
-        guard let targetDisplay else {
+        let content = try await fetchShareableContent()
+        guard !content.displays.isEmpty else {
             throw CaptureError.noDisplay
         }
 
-        let filter = SCContentFilter(display: targetDisplay, excludingWindows: [])
-        let config = SCStreamConfiguration()
-        let scale = retinaScale ? displayScaleFactor(for: targetDisplay) : 1.0
-        config.width = max(1, Int(CGFloat(targetDisplay.width) * scale))
-        config.height = max(1, Int(CGFloat(targetDisplay.height) * scale))
-        config.showsCursor = false
-        config.captureResolution = .best
+        let excludedWindows = ownOverlayWindows(in: content)
+        var snapshots: [DisplaySnapshot] = []
+        snapshots.reserveCapacity(content.displays.count)
 
-        let image = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: config
-        )
-        return image
+        for display in content.displays {
+            let scale = displayScaleFactor(for: display)
+            let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
+            let config = SCStreamConfiguration()
+            config.width = max(1, Int(CGFloat(display.width) * scale))
+            config.height = max(1, Int(CGFloat(display.height) * scale))
+            config.showsCursor = false
+            config.captureResolution = .best
+
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+            snapshots.append(DisplaySnapshot(displayID: display.displayID, image: image))
+        }
+
+        return snapshots
     }
 
     func captureAllDisplays(retinaScale: Bool = true) async throws -> MultiDisplayCapture {
         try ensureScreenCapturePermission()
-        let content = try await getCachedContent()
+        let content = try await fetchShareableContent()
         return try await captureAllDisplays(in: content, retinaScale: retinaScale)
     }
 
@@ -77,7 +102,6 @@ final class ScreenCaptureService {
 
     func captureWindow(_ window: SCWindow, retinaScale: Bool = true, includeShadow: Bool = true) async throws -> WindowCapture {
         try ensureScreenCapturePermission()
-        let content = try await getCachedContent()
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
         // With shadows, the captured content is larger than the window frame;
@@ -85,7 +109,13 @@ final class ScreenCaptureService {
         // `filter.contentRect` covers the full content (points), and
         // `pointPixelScale` is the native pixel density for it.
         let filterScale = CGFloat(filter.pointPixelScale)
-        let nativeScale = filterScale > 0 ? filterScale : displayScale(for: window.frame, in: content)
+        let nativeScale: CGFloat
+        if filterScale > 0 {
+            nativeScale = filterScale
+        } else {
+            let content = try await fetchShareableContent()
+            nativeScale = displayScale(for: window.frame, in: content)
+        }
         let scale = retinaScale ? nativeScale : 1.0
         let contentSize = includeShadow && !filter.contentRect.isEmpty
             ? filter.contentRect.size
@@ -106,7 +136,7 @@ final class ScreenCaptureService {
 
     func captureRect(_ rect: CGRect, retinaScale: Bool = true) async throws -> CGImage {
         try ensureScreenCapturePermission()
-        let content = try await getCachedContent()
+        let content = try await fetchShareableContent()
         let intersectingDisplays = content.displays.filter {
             displayRect($0).intersects(rect)
         }
@@ -116,14 +146,13 @@ final class ScreenCaptureService {
             return try crop(rect: rect, from: multiDisplay.image, sourceRect: multiDisplay.sourceRect, scale: multiDisplay.scale)
         }
 
-        let context = try await prepareRectCapture(for: rect, retinaScale: retinaScale)
+        let context = try await prepareRectCapture(for: rect, content: content, retinaScale: retinaScale)
         return try await captureRect(rect, using: context)
     }
 
     func prepareRectCapture(
         for rect: CGRect,
         content: SCShareableContent? = nil,
-        excludingWindowIDs: [CGWindowID] = [],
         retinaScale: Bool = true
     ) async throws -> RectCaptureContext {
         try ensureScreenCapturePermission()
@@ -131,7 +160,7 @@ final class ScreenCaptureService {
         if let content {
             resolvedContent = content
         } else {
-            resolvedContent = try await getCachedContent()
+            resolvedContent = try await fetchShareableContent()
         }
         guard let display = resolveDisplay(for: rect, in: resolvedContent) else {
             throw CaptureError.noDisplay
@@ -145,14 +174,10 @@ final class ScreenCaptureService {
         )
 
         let scale = retinaScale ? displayScaleFactor(for: display) : 1.0
-        let excludedWindows: [SCWindow]
-        if excludingWindowIDs.isEmpty {
-            excludedWindows = []
-        } else {
-            let excludedSet = Set(excludingWindowIDs)
-            excludedWindows = resolvedContent.windows.filter { excludedSet.contains($0.windowID) }
-        }
-        let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
+        let filter = SCContentFilter(
+            display: display,
+            excludingWindows: ownOverlayWindows(in: resolvedContent)
+        )
         let config = SCStreamConfiguration()
         config.showsCursor = false
         config.captureResolution = .best
@@ -180,7 +205,7 @@ final class ScreenCaptureService {
 
     func getShareableContent() async throws -> SCShareableContent {
         try ensureScreenCapturePermission()
-        return try await getCachedContent()
+        return try await fetchShareableContent()
     }
 
     private func ensureScreenCapturePermission() throws {
@@ -221,13 +246,14 @@ final class ScreenCaptureService {
             throw CaptureError.noDisplay
         }
 
+        let excludedWindows = ownOverlayWindows(in: content)
         var capturedDisplays: [DisplayCapture] = []
         capturedDisplays.reserveCapacity(content.displays.count)
 
         for display in content.displays {
             let frame = displayRect(display)
             let scale = retinaScale ? displayScaleFactor(for: display) : 1.0
-            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
             let config = SCStreamConfiguration()
             config.width = max(1, Int(frame.width * scale))
             config.height = max(1, Int(frame.height * scale))
@@ -357,25 +383,6 @@ final class ScreenCaptureService {
         }
         return max(1, CGFloat(mode.pixelWidth) / CGFloat(mode.width))
     }
-
-    private func preferredDisplay(in content: SCShareableContent) -> SCDisplay? {
-        guard !content.displays.isEmpty else { return nil }
-        // Prefer the display under the pointer (where the user is working).
-        // CGEvent/CGGetDisplaysWithPoint are safe off the main thread, unlike NSScreen.main.
-        if let pointer = CGEvent(source: nil)?.location {
-            var displayID: CGDirectDisplayID = 0
-            var count: UInt32 = 0
-            if CGGetDisplaysWithPoint(pointer, 1, &displayID, &count) == .success, count > 0,
-               let matchingDisplay = content.displays.first(where: { $0.displayID == displayID }) {
-                return matchingDisplay
-            }
-        }
-        if let matchingDisplay = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) {
-            return matchingDisplay
-        }
-        return content.displays.first
-    }
-
 }
 
 enum CaptureError: Error, LocalizedError {

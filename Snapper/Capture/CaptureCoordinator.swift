@@ -162,7 +162,7 @@ final class CaptureCoordinator {
                         image: image,
                         mode: .area,
                         timestamp: Date(),
-                        sourceRect: rect,
+                        sourceRect: cgRect,
                         windowName: nil,
                         applicationName: nil,
                         scale: rect.width > 0 ? CGFloat(image.width) / rect.width : 1
@@ -262,7 +262,13 @@ final class CaptureCoordinator {
                         .appendingPathComponent(filename)
                         .appendingPathExtension(options.format.fileExtension)
                 ) {
-                    if ImageUtils.save(result.image, to: url, format: options.format, jpegQuality: options.jpegQuality) {
+                    if ImageUtils.save(
+                        result.image,
+                        to: url,
+                        format: options.format,
+                        jpegQuality: options.jpegQuality,
+                        scale: result.scale
+                    ) {
                         savedURL = url
                         fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
                     } else {
@@ -271,6 +277,7 @@ final class CaptureCoordinator {
                 }
             }
             let thumbnail = ImageUtils.generateThumbnail(result.image)
+            let saveFailed = options.saveToFile && savedURL == nil
 
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
@@ -283,6 +290,13 @@ final class CaptureCoordinator {
                         thumbnail: thumbnail
                     )
                 )
+                // After the post: the alert is modal, and the capture should
+                // already be in the Quick Access overlay while it is up.
+                if saveFailed {
+                    MainActor.assumeIsolated {
+                        CaptureFailureAlert.presentSaveFailure(directory: options.saveDirectory)
+                    }
+                }
             }
         }
     }
@@ -307,6 +321,7 @@ final class CaptureCoordinator {
         }
 
         print("\(context) failed: \(error)")
+        CaptureFailureAlert.presentCaptureFailure(error, context: context)
     }
 }
 

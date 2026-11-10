@@ -106,9 +106,6 @@ final class ScrollCaptureCoordinator {
             guard !rect.isNull, rect.width >= 1, rect.height >= 1 else {
                 throw ScrollCaptureError.selectionOffDisplay
             }
-            let appKitRect = rect == selectedRect
-                ? selectedAppKitRect
-                : CoordinateSpace.appKitToCG(rect, primaryScreenMaxY: primaryScreenMaxY)
 
             let scrollPoint = CGPoint(x: rect.midX, y: rect.midY)
             let autoScroller = AutoScroller(
@@ -255,7 +252,7 @@ final class ScrollCaptureCoordinator {
                 image: finalImage,
                 mode: .scroll,
                 timestamp: Date(),
-                sourceRect: appKitRect,
+                sourceRect: rect,
                 windowName: nil,
                 applicationName: autoScroller.targetName,
                 scale: rect.width > 0 ? CGFloat(finalImage.width) / rect.width : 1
