@@ -40,6 +40,7 @@ final class MenuBarMenu: NSMenu {
         addItem(makeItem("All-in-One HUD", action: #selector(showAllInOneHUD), hotkeyAction: .allInOneHUD))
         addItem(makeItem("Capture Window", action: #selector(captureWindow), hotkeyAction: .captureWindow))
         addItem(makeItem("Capture Scroll", action: #selector(captureScroll), hotkeyAction: .captureScroll))
+        addItem(makeItem("Capture Text (OCR)", action: #selector(captureText), hotkeyAction: .ocrCapture))
 
         addItem(NSMenuItem.separator())
 
@@ -72,12 +73,11 @@ final class MenuBarMenu: NSMenu {
 
     private func makeItem(_ title: String, action: Selector, hotkeyAction: HotkeyAction? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        if let hotkeyAction, let binding = appState.hotkeyBindings[hotkeyAction] {
-            let keyName = KeyCodeMap.name(for: binding.keyCode)
-            if keyName.count == 1 {
-                item.keyEquivalent = keyName.lowercased()
-                item.keyEquivalentModifierMask = modifierFlags(from: binding.modifiers)
-            }
+        if let hotkeyAction,
+           let binding = appState.hotkeyBindings[hotkeyAction],
+           let keyEquivalent = KeyCodeMap.menuKeyEquivalent(for: binding.keyCode) {
+            item.keyEquivalent = keyEquivalent
+            item.keyEquivalentModifierMask = modifierFlags(from: binding.modifiers)
         }
         item.target = self
         return item
@@ -106,6 +106,10 @@ final class MenuBarMenu: NSMenu {
 
     @objc private func captureScroll() {
         NotificationCenter.default.post(name: .startCapture, object: CaptureMode.scroll)
+    }
+
+    @objc private func captureText() {
+        NotificationCenter.default.post(name: .startCapture, object: CaptureMode.ocr)
     }
 
     @objc private func showAllInOneHUD() {
@@ -145,12 +149,10 @@ extension Notification.Name {
     static let startCapture = Notification.Name("startCapture")
     static let showHistory = Notification.Name("showHistory")
     static let showSettings = Notification.Name("showSettings")
-    static let showOnboarding = Notification.Name("showOnboarding")
     static let requestPermissions = Notification.Name("requestPermissions")
     static let checkForUpdates = Notification.Name("checkForUpdates")
     static let captureCompleted = Notification.Name("captureCompleted")
     static let menuBarVisibilityChanged = Notification.Name("menuBarVisibilityChanged")
     static let overlayCornerChanged = Notification.Name("overlayCornerChanged")
-    static let pinnedOpacityChanged = Notification.Name("pinnedOpacityChanged")
     static let historyRetentionChanged = Notification.Name("historyRetentionChanged")
 }

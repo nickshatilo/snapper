@@ -2,20 +2,9 @@ import Darwin
 import Foundation
 
 extension FileManager {
-    /// Returns `url` unchanged if nothing exists there, otherwise the first
-    /// "name 2.ext", "name 3.ext", … that doesn't collide, so same-second
-    /// captures never overwrite each other.
-    ///
-    /// This only checks for existence, so two concurrent callers can receive
-    /// the same URL. Use `reserveUniqueURL(for:)` when saves may overlap.
-    func uniqueURL(for url: URL) -> URL {
-        for candidate in Self.uniqueURLCandidates(for: url) where !fileExists(atPath: candidate.path) {
-            return candidate
-        }
-        return Self.uniqueURLCandidate(for: url, counter: nil)
-    }
-
-    /// Like `uniqueURL(for:)`, but atomically claims the name by creating an
+    /// Claims `url` if nothing exists there, otherwise the first "name 2.ext",
+    /// "name 3.ext", … that doesn't collide, so same-second captures never
+    /// overwrite each other. The name is claimed atomically by creating an
     /// empty placeholder file with `O_CREAT | O_EXCL`, so concurrent callers
     /// always get distinct URLs. The caller writes over the placeholder and
     /// must remove it if that write fails. Returns nil if no file can be

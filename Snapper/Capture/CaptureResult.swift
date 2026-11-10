@@ -16,14 +16,4 @@ struct CaptureResult {
 
     var width: Int { image.width }
     var height: Int { image.height }
-
-    var nsImage: NSImage {
-        NSImage(
-            cgImage: image,
-            size: NSSize(
-                width: CGFloat(image.width) / scale,
-                height: CGFloat(image.height) / scale
-            )
-        )
-    }
 }

@@ -31,13 +31,12 @@ final class OverlayUtilityTests: XCTestCase {
             XCTAssertEqual(loaded.size.width, 4, accuracy: 0.05, format.displayName)
             XCTAssertEqual(loaded.size.height, 3, accuracy: 0.05, format.displayName)
 
-            // The metadata must not cost any pixels when the file is read back.
-            let pixels = try XCTUnwrap(
-                loaded.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                format.displayName
-            )
-            XCTAssertEqual(pixels.width, 8, format.displayName)
-            XCTAssertEqual(pixels.height, 6, format.displayName)
+            // The metadata must not cost any pixels when the file is read back,
+            // and the scale has to survive the round trip.
+            let decoded = try XCTUnwrap(ImageUtils.loadImage(at: url), format.displayName)
+            XCTAssertEqual(decoded.image.width, 8, format.displayName)
+            XCTAssertEqual(decoded.image.height, 6, format.displayName)
+            XCTAssertEqual(decoded.scale, 2, accuracy: 0.01, format.displayName)
         }
     }
 
@@ -49,6 +48,7 @@ final class OverlayUtilityTests: XCTestCase {
         let loaded = try XCTUnwrap(NSImage(contentsOf: url))
         XCTAssertEqual(loaded.size.width, 8, accuracy: 0.05)
         XCTAssertEqual(loaded.size.height, 6, accuracy: 0.05)
+        XCTAssertEqual(try XCTUnwrap(ImageUtils.loadImage(at: url)).scale, 1)
     }
 
     // MARK: - Capture sounds

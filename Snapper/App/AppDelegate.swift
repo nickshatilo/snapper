@@ -65,6 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timerCaptureController = TimerCaptureController()
         allInOneHUDPanel = AllInOneHUDPanel()
 
+        // The editor saves with the user's current format, folder and
+        // filename settings, read at save time rather than when it opened.
+        AnnotationEditorWindow.saveOptionsProvider = { [appState] in
+            CaptureOptions.from(appState: appState)
+        }
+
         // History & editor notifications
         observeNotifications()
 
@@ -85,6 +91,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeyManager?.start()
         enforceReachability()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AnnotationEditorWindow.closeAllForTermination() ? .terminateNow : .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -143,11 +153,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         observerTokens.append(showSettingsToken)
 
-        let showOnboardingToken = NotificationCenter.default.addObserver(forName: .showOnboarding, object: nil, queue: .main) { [weak self] _ in
-            self?.showOnboarding()
-        }
-        observerTokens.append(showOnboardingToken)
-
         let onboardingFinishedToken = NotificationCenter.default.addObserver(forName: .onboardingFinished, object: nil, queue: .main) { [weak self] _ in
             self?.onboardingWindowController?.close()
             self?.onboardingWindowController = nil
@@ -161,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let openEditorToken = NotificationCenter.default.addObserver(forName: .openEditor, object: nil, queue: .main) { notification in
             if let wrapper = notification.object as? ImageWrapper {
-                AnnotationEditorWindow.open(with: wrapper.image)
+                AnnotationEditorWindow.open(with: wrapper.image, scale: wrapper.scale)
             }
         }
         observerTokens.append(openEditorToken)
@@ -242,6 +247,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.historyManager?.delete(recordID: recordID)
         }
         observerTokens.append(deleteHistoryRecordToken)
+
+        // A capture taken with "Save to File" off gets its file later, when
+        // it is saved from the Quick Access overlay.
+        let historyFileSavedToken = NotificationCenter.default.addObserver(
+            forName: .historyRecordFileSaved,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let update = notification.object as? HistoryFileUpdate else { return }
+            self?.historyManager?.updateFile(
+                recordID: update.recordID,
+                url: update.url,
+                fileSize: update.fileSize
+            )
+        }
+        observerTokens.append(historyFileSavedToken)
     }
 
     private func showSettingsWindow() {

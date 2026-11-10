@@ -243,8 +243,7 @@ struct QuickAccessCapture: Identifiable {
             return cached.image
         }
 
-        guard let nsImage = NSImage(contentsOf: savedURL),
-              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        guard let cgImage = ImageUtils.loadImage(at: savedURL)?.image else {
             Self.loadedImageCache.removeObject(forKey: cacheKey)
             return nil
         }

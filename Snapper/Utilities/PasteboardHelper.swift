@@ -70,21 +70,6 @@ enum PasteboardHelper {
         )
     }
 
-    @discardableResult
-    static func copyFile(
-        at url: URL,
-        showsConfirmation: Bool = false,
-        confirmationScreen: NSScreen? = nil
-    ) -> Bool {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        return finishCopy(
-            pasteboard.writeObjects([url as NSURL]),
-            showsConfirmation: showsConfirmation,
-            confirmationScreen: confirmationScreen
-        )
-    }
-
     /// Shows a brief status pill for outcomes that have no window of their own
     /// to report in (e.g. a capture that found nothing to copy).
     static func showStatus(_ message: String, systemImage: String, on screen: NSScreen? = nil) {

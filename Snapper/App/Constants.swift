@@ -27,15 +27,12 @@ enum Constants {
     enum Defaults {
         static let filenamePattern = "Snapper {date} at {time}"
         static let thumbnailWidth: CGFloat = 300
-        static let overlayWidth: CGFloat = 320
         static let magnifierSize: CGFloat = 120
         static let magnifierZoom: CGFloat = 8
     }
 
     enum App {
-        static let name = "Snapper"
-        static let bundleIdentifier = "com.snapper.app"
-        static let githubURL = "https://github.com/snapper-app/snapper"
+        static let githubURL = "https://github.com/nickshatilo/snapper"
         static let supportDirectory: URL = {
             let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
                 .appendingPathComponent("Snapper")
