@@ -70,19 +70,12 @@ enum PasteboardHelper {
         )
     }
 
-    @discardableResult
-    static func copyFile(
-        at url: URL,
-        showsConfirmation: Bool = false,
-        confirmationScreen: NSScreen? = nil
-    ) -> Bool {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        return finishCopy(
-            pasteboard.writeObjects([url as NSURL]),
-            showsConfirmation: showsConfirmation,
-            confirmationScreen: confirmationScreen
-        )
+    /// Shows a brief status pill for outcomes that have no window of their own
+    /// to report in (e.g. a capture that found nothing to copy).
+    static func showStatus(_ message: String, systemImage: String, on screen: NSScreen? = nil) {
+        Task { @MainActor in
+            CopyConfirmationHUD.shared.show(message: message, systemImage: systemImage, on: screen)
+        }
     }
 
     private static func finishCopy(
@@ -101,16 +94,28 @@ enum PasteboardHelper {
 @MainActor
 private final class CopyConfirmationHUD {
     static let shared = CopyConfirmationHUD()
+    private static let minimumPanelSize = NSSize(width: 132, height: 58)
 
     private var panel: NSPanel?
     private var dismissalTask: Task<Void, Never>?
 
-    func show(on sourceScreen: NSScreen?) {
+    func show(
+        message: String = "Copied",
+        systemImage: String = "checkmark.circle.fill",
+        on sourceScreen: NSScreen?
+    ) {
         dismissalTask?.cancel()
 
         let panel = panel ?? makePanel()
-        let hostingView = NSHostingView(rootView: CopyConfirmationHUDView())
-        hostingView.frame = NSRect(origin: .zero, size: panel.frame.size)
+        let hostingView = NSHostingView(
+            rootView: CopyConfirmationHUDView(message: message, systemImage: systemImage)
+        )
+        // The panel is sized explicitly from the message (with room for the
+        // shadow), so the hosting view must not also impose the capsule's own
+        // size limits on the window.
+        hostingView.sizingOptions = []
+        hostingView.frame = NSRect(origin: .zero, size: panelSize(for: message))
+        panel.setContentSize(hostingView.frame.size)
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
@@ -127,9 +132,20 @@ private final class CopyConfirmationHUD {
         }
     }
 
+    /// Wide enough for the capsule (icon, message, padding) plus room for its
+    /// shadow; the capsule is centred in whatever is left over.
+    private func panelSize(for message: String) -> NSSize {
+        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let textWidth = (message as NSString).size(withAttributes: [.font: font]).width
+        return NSSize(
+            width: max(Self.minimumPanelSize.width, ceil(textWidth) + 92),
+            height: Self.minimumPanelSize.height
+        )
+    }
+
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 132, height: 58),
+            contentRect: NSRect(origin: .zero, size: Self.minimumPanelSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -165,12 +181,21 @@ private final class CopyConfirmationHUD {
 }
 
 private struct CopyConfirmationHUDView: View {
+    let message: String
+    let systemImage: String
+
     @State private var isVisible = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    init(message: String, systemImage: String) {
+        self.message = message
+        self.systemImage = systemImage
+    }
+
     var body: some View {
-        Label("Copied", systemImage: "checkmark.circle.fill")
+        Label(message, systemImage: systemImage)
             .font(.system(size: 13, weight: .semibold))
+            .lineLimit(1)
             .foregroundStyle(.primary)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)

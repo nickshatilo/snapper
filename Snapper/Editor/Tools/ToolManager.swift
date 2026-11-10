@@ -235,11 +235,24 @@ enum CounterStyle: String, CaseIterable, Codable {
     func display(for value: Int) -> String {
         switch self {
         case .numbers: return "\(value)"
-        case .letters:
-            let letter = Character(UnicodeScalar(64 + min(value, 26))!)
-            return String(letter)
+        case .letters: return letterLabel(value)
         case .roman: return romanNumeral(value)
         }
+    }
+
+    /// Spreadsheet-column labels (A…Z, AA, AB, …) so counters past 26 stay
+    /// distinct instead of all reading "Z".
+    private func letterLabel(_ num: Int) -> String {
+        var result = ""
+        var remaining = num
+        while remaining > 0 {
+            // Bijective base 26: there is no zero digit, so shift by one
+            // before each division.
+            remaining -= 1
+            result.insert(Character(UnicodeScalar(UInt8(65 + remaining % 26))), at: result.startIndex)
+            remaining /= 26
+        }
+        return result
     }
 
     private func romanNumeral(_ num: Int) -> String {

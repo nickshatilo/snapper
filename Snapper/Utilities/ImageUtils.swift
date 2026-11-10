@@ -1,8 +1,18 @@
 import AppKit
+import ImageIO
 import UniformTypeIdentifiers
 
 enum ImageUtils {
-    static func save(_ image: CGImage, to url: URL, format: ImageFormat, jpegQuality: Double = 0.9) -> Bool {
+    /// `scale` is the source display's backing scale. It is written as DPI
+    /// metadata so a retina capture read back from disk keeps its on-screen
+    /// point size instead of being treated as twice as large.
+    static func save(
+        _ image: CGImage,
+        to url: URL,
+        format: ImageFormat,
+        jpegQuality: Double = 0.9,
+        scale: CGFloat = 1
+    ) -> Bool {
         let utType: UTType
         switch format {
         case .png: utType = .png
@@ -18,25 +28,33 @@ enum ImageUtils {
         if format == .jpeg {
             properties[kCGImageDestinationLossyCompressionQuality] = jpegQuality
         }
+        if scale > 0 {
+            let dpi = 72 * Double(scale)
+            properties[kCGImagePropertyDPIWidth] = dpi
+            properties[kCGImagePropertyDPIHeight] = dpi
+        }
 
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         return CGImageDestinationFinalize(destination)
     }
 
-    static func imageData(_ image: CGImage, format: ImageFormat, jpegQuality: Double = 0.9) -> Data? {
-        let bitmapRep = NSBitmapImageRep(cgImage: image)
-        switch format {
-        case .png:
-            return bitmapRep.representation(using: .png, properties: [:])
-        case .jpeg:
-            return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: jpegQuality])
-        case .tiff:
-            return bitmapRep.representation(using: .tiff, properties: [:])
+    /// Decodes an image file's own pixels together with the backing scale
+    /// recorded in its DPI metadata (1 when there is none). ImageIO is used
+    /// rather than `NSImage`, whose `cgImage(forProposedRect:)` is free to
+    /// hand back a point-sized rendering of a high-DPI file.
+    static func loadImage(at url: URL) -> (image: CGImage, scale: CGFloat)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
         }
-    }
-
-    static func cgImage(from nsImage: NSImage) -> CGImage? {
-        nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        var scale: CGFloat = 1
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let dpi = (properties[kCGImagePropertyDPIWidth] as? NSNumber)?.doubleValue,
+           dpi > 72 {
+            // PNG stores pixels per metre, so 144 dpi reads back as 143.99.
+            scale = CGFloat((dpi / 72 * 100).rounded() / 100)
+        }
+        return (image, scale)
     }
 
     static func resize(_ image: CGImage, to size: CGSize) -> CGImage? {

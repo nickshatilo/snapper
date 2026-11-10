@@ -30,7 +30,12 @@ final class SnapperTests: XCTestCase {
     func testCaptureSoundIncludesCameraShot() {
         XCTAssertTrue(CaptureSound.allCases.contains(.cameraShot))
         XCTAssertEqual(CaptureSound.cameraShot.displayName, "Camera Shot")
-        XCTAssertEqual(CaptureSound.cameraShot.nsSoundName, NSSound.Name("PhotoShutter"))
+        // The shutter is not a named system sound; it is loaded from disk.
+        XCTAssertNil(CaptureSound.cameraShot.nsSoundName)
+        XCTAssertEqual(CaptureSound.cameraShot.fileCandidates.map { ($0 as NSString).lastPathComponent }, [
+            "Screen Capture.aif",
+            "Grab.aif",
+        ])
     }
 
     func testToolTypeShortcuts() {
@@ -50,11 +55,6 @@ final class SnapperTests: XCTestCase {
     func testFileNameGenerator() {
         let name = FileNameGenerator.generate(pattern: "test-{type}", mode: .fullscreen, appName: "Safari")
         XCTAssertTrue(name.contains("Fullscreen"))
-    }
-
-    func testBackgroundTemplateBuiltIn() {
-        XCTAssertFalse(BackgroundTemplate.builtIn.isEmpty)
-        XCTAssertEqual(BackgroundTemplate.builtIn.count, 6)
     }
 
     func testOverlayCornerCases() {

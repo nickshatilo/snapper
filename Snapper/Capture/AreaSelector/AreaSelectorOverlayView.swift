@@ -33,6 +33,10 @@ final class AreaSelectorOverlayView: NSView {
         fatalError("init(coder:) not supported")
     }
 
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -89,11 +93,33 @@ final class AreaSelectorOverlayView: NSView {
         ]
         let size = (text as NSString).size(withAttributes: attrs)
 
-        // Position below selection rect
-        let labelX = rect.midX - size.width / 2
-        let labelY = rect.minY - size.height - 8
+        let horizontalPadding: CGFloat = 6
+        let verticalPadding: CGFloat = 2
+        let gap: CGFloat = 8
 
-        let bgRect = NSRect(x: labelX - 6, y: labelY - 2, width: size.width + 12, height: size.height + 4)
+        // Below the selection when there is room, else above it, else inside
+        // along its bottom edge, so the label is never clipped off-screen.
+        let belowY = rect.minY - size.height - gap
+        let aboveY = rect.maxY + gap
+        let labelY: CGFloat
+        if belowY - verticalPadding >= bounds.minY {
+            labelY = belowY
+        } else if aboveY + size.height + verticalPadding <= bounds.maxY {
+            labelY = aboveY
+        } else {
+            labelY = rect.minY + gap
+        }
+        let labelX = max(
+            bounds.minX + horizontalPadding,
+            min(rect.midX - size.width / 2, bounds.maxX - size.width - horizontalPadding)
+        )
+
+        let bgRect = NSRect(
+            x: labelX - horizontalPadding,
+            y: labelY - verticalPadding,
+            width: size.width + horizontalPadding * 2,
+            height: size.height + verticalPadding * 2
+        )
         context.setFillColor(NSColor.black.withAlphaComponent(0.7).cgColor)
         let bgPath = CGPath(roundedRect: bgRect, cornerWidth: 4, cornerHeight: 4, transform: nil)
         context.addPath(bgPath)

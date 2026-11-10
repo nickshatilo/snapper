@@ -97,14 +97,11 @@ final class QuickAccessManager {
         }
     }
 
-    func dismissAll() {
-        for capture in captures {
-            capture.invalidateCachedImage()
-        }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            captures.removeAll()
-        }
-        hidePanel()
+    /// Records that a capture which had no file has been written to `url`, so
+    /// the overlay's file actions (reveal, drag, delete) now apply to it.
+    func markSaved(id: UUID, url: URL, fileSize: Int) {
+        guard let index = captures.firstIndex(where: { $0.id == id }) else { return }
+        captures[index] = captures[index].saved(to: url, fileSize: fileSize)
     }
 
     private func showPanel() {
@@ -209,8 +206,22 @@ struct QuickAccessCapture: Identifiable {
     let fileSize: Int
     let scale: CGFloat
 
-    var formattedFileSize: String {
-        ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
+    /// The same capture, now backed by a file. The in-memory image is kept:
+    /// the file may be a lossy copy of it.
+    func saved(to url: URL, fileSize: Int) -> QuickAccessCapture {
+        QuickAccessCapture(
+            id: id,
+            recordID: recordID,
+            inMemoryImage: inMemoryImage,
+            thumbnail: thumbnail,
+            mode: mode,
+            timestamp: timestamp,
+            savedURL: url,
+            width: width,
+            height: height,
+            fileSize: fileSize,
+            scale: scale
+        )
     }
 
     func resolvedImage() -> CGImage? {
@@ -232,8 +243,7 @@ struct QuickAccessCapture: Identifiable {
             return cached.image
         }
 
-        guard let nsImage = NSImage(contentsOf: savedURL),
-              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        guard let cgImage = ImageUtils.loadImage(at: savedURL)?.image else {
             Self.loadedImageCache.removeObject(forKey: cacheKey)
             return nil
         }

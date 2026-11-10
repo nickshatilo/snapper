@@ -18,15 +18,4 @@ enum CaptureMode: String, CaseIterable, Codable {
         case .timer: return "Timer"
         }
     }
-
-    var iconName: String {
-        switch self {
-        case .fullscreen: return "rectangle.dashed"
-        case .area: return "crop"
-        case .window: return "macwindow"
-        case .scroll: return "arrow.down.to.line.compact"
-        case .ocr: return "text.viewfinder"
-        case .timer: return "timer"
-        }
-    }
 }

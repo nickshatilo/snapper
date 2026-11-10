@@ -14,6 +14,9 @@ struct HistoryBrowserView: View {
     @State private var selectedRecords: Set<UUID> = []
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 12)]
+    /// Only modes that are stored on a record: timer captures are recorded
+    /// under the mode they run, and OCR captures leave no record.
+    private static let filterModes: [CaptureMode] = [.fullscreen, .area, .window, .scroll]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,7 +74,7 @@ struct HistoryBrowserView: View {
 
             Picker("Filter", selection: $selectedFilter) {
                 Text("All").tag(nil as CaptureMode?)
-                ForEach(CaptureMode.allCases, id: \.self) { mode in
+                ForEach(Self.filterModes, id: \.self) { mode in
                     Text(mode.displayName).tag(mode as CaptureMode?)
                 }
             }
@@ -92,7 +95,7 @@ struct HistoryBrowserView: View {
             .tint(!showGrid ? .accentColor : nil)
 
             if !selectedRecords.isEmpty {
-                Button("Delete Selected (\(selectedRecords.count))") {
+                Button("Remove Selected (\(selectedRecords.count)) from History") {
                     deleteSelected()
                 }
                 .foregroundStyle(.red)
@@ -139,7 +142,7 @@ struct HistoryBrowserView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             let totalSize = records.reduce(0) { $0 + $1.fileSize }
-            Text("Total: \(ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file))")
+            Text("Screenshots on disk: \(ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -157,6 +160,11 @@ struct HistoryBrowserView: View {
             Text(record.timestamp.formatted(date: .abbreviated, time: .shortened))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            if let caption = missingFileCaption(for: record) {
+                Text(caption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(8)
         .background(selectedRecords.contains(record.id) ? Color.accentColor.opacity(0.2) : Color.clear)
@@ -180,28 +188,36 @@ struct HistoryBrowserView: View {
 
     @ViewBuilder
     private func recordActions(_ record: CaptureRecord) -> some View {
+        // Captures that were never saved, or whose file was moved or deleted
+        // since, have nothing to open, reveal or copy.
+        let fileExists = missingFileCaption(for: record) == nil
         Button("Open in Editor") {
-            if let image = NSImage(contentsOfFile: record.filePath)?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(image))
+            if let loaded = loadImage(for: record) {
+                NotificationCenter.default.post(
+                    name: .openEditor,
+                    object: ImageWrapper(loaded.image, scale: loaded.scale)
+                )
             }
         }
-        .disabled(record.filePath.isEmpty)
+        .disabled(!fileExists)
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: record.filePath)])
         }
-        .disabled(record.filePath.isEmpty)
+        .disabled(!fileExists)
         Button("Copy") {
-            if let image = NSImage(contentsOfFile: record.filePath) {
+            if let loaded = loadImage(for: record) {
                 PasteboardHelper.copyImage(
-                    image,
+                    loaded.image,
+                    scale: loaded.scale,
                     showsConfirmation: true,
                     confirmationScreen: NSApp.keyWindow?.screen
                 )
             }
         }
-        .disabled(record.filePath.isEmpty)
+        .disabled(!fileExists)
         Divider()
-        Button("Delete", role: .destructive) {
+        // Only the history entry goes away; the screenshot file is kept.
+        Button("Remove from History", role: .destructive) {
             Task { @MainActor in
                 removeThumbnailFromCache(for: record)
                 historyManager.delete(record)
@@ -209,6 +225,24 @@ struct HistoryBrowserView: View {
                 selectedRecords.remove(record.id)
             }
         }
+    }
+
+    /// Why a record's screenshot can't be opened, or nil when its file exists.
+    private func missingFileCaption(for record: CaptureRecord) -> String? {
+        if record.filePath.isEmpty {
+            return "Not saved to disk"
+        }
+        if !FileManager.default.fileExists(atPath: record.filePath) {
+            return "File missing"
+        }
+        return nil
+    }
+
+    /// Loads a record's screenshot with its backing scale (pixels per point),
+    /// so Retina captures keep their on-screen size in the editor and when
+    /// pasted.
+    private func loadImage(for record: CaptureRecord) -> (image: CGImage, scale: CGFloat)? {
+        ImageUtils.loadImage(at: URL(fileURLWithPath: record.filePath))
     }
 
     private func historyListRow(_ record: CaptureRecord) -> some View {
@@ -222,6 +256,11 @@ struct HistoryBrowserView: View {
                 Text("\(record.width) × \(record.height)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let caption = missingFileCaption(for: record) {
+                    Text(caption)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()

@@ -10,34 +10,33 @@ Open-source screenshot tool for macOS. Aims for local feature parity with CleanS
 ## Features
 
 **Capture Modes**
-- **Fullscreen** — single display or all monitors
-- **Area Selection** — crosshair with magnifier loupe, pixel coordinates, dimension overlay
-- **Window Capture** — hover-to-highlight, configurable shadow and background
+- **Fullscreen** — every connected display, composed into one image
+- **Area Selection** — crosshair with live pixel dimensions, optional magnifier loupe and frozen screen
+- **Window Capture** — hover-to-highlight, optional window shadow
 - **All-in-One HUD** — pick any mode from a single overlay (like ⌘⇧5)
 - **Scrolling Capture** — auto-scroll and stitch long content
 - **OCR** — select area, extract text on-device via Apple Vision (copied to clipboard)
-- **Self-Timer** — 3/5/10 second countdown on any capture mode
+- **Self-Timer** — 3/5/10 second countdown on any capture mode from the HUD, Esc to cancel
 
 **Quick Access Overlay**
 - Floating thumbnail after every capture, persistent until dismissed
 - Stack multiple captures, drag-and-drop into any app
-- One-click copy, save, annotate, pin, or delete
+- One-click copy, save or reveal in Finder, annotate, pin, or move to Trash
 
 **Annotation Editor**
 - Arrow, rectangle, ellipse, line, pencil, highlighter, text, blur, pixelate, spotlight, counter, crop
-- Background/mockup tool with gradient and solid color templates
-- Non-destructive editing with `.snapper` project format
+- OCR tool to select and copy text from any screenshot
 - Undo/redo, keyboard shortcuts for every tool
 
 **Floating Screenshots**
 - Pin captures as always-on-top windows
-- Resize, adjust opacity, lock (click-through mode)
+- Resize, adjust opacity, lock in place
 - Persists across app restarts
 
 **History**
 - Local SQLite database via SwiftData
 - Browse, search by OCR text, filter by capture type
-- Configurable retention and storage location
+- Configurable retention
 
 **Other**
 - Menu bar agent app (no dock icon)
@@ -45,6 +44,7 @@ Open-source screenshot tool for macOS. Aims for local feature parity with CleanS
 - Fully customizable shortcuts with conflict detection
 - Auto-updates via Sparkle
 - Launch at login
+- Show or hide desktop icons from the menu bar
 
 Updates are delivered in-app through Sparkle. Snapper verifies both the signed
 appcast and update archive before installing, while macOS independently verifies
@@ -70,6 +70,10 @@ open Snapper.xcodeproj
 
 Build and run the `Snapper` scheme.
 
+The project uses manual Developer ID signing with the maintainer's team. To build
+with your own Apple certificate, change `DEVELOPMENT_TEAM` and `CODE_SIGN_IDENTITY`
+in `project.yml` before running `xcodegen generate`.
+
 ### Permissions
 
 Snapper needs two permissions on first launch:
@@ -83,10 +87,10 @@ Snapper needs two permissions on first launch:
 |----------|--------|
 | `⌘⇧3` | Capture Fullscreen |
 | `⌘⇧4` | Capture Area |
-| `⌘⇧4` → hover | Capture Window |
-| `⌘⇧5` | All-in-One Mode |
+| `⌘⇧5` | All-in-One HUD |
 
-All shortcuts are customizable in Settings → Shortcuts.
+Window, scrolling, OCR and timer capture and the desktop-icons toggle have no
+shortcut by default. Assign or change any of them in Settings → Shortcuts.
 
 ## Contributing
 
@@ -98,4 +102,4 @@ All shortcuts are customizable in Settings → Shortcuts.
 
 ## License
 
-MIT
+[MIT](LICENSE)

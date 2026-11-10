@@ -81,11 +81,10 @@ final class AppState {
         didSet { enqueueDefault(historyRetentionDays, forKey: Constants.Keys.historyRetentionDays) }
     }
 
+    /// Opacity given to newly pinned screenshots; existing pins keep whatever
+    /// opacity the user set on them.
     var defaultPinnedOpacity: Double {
-        didSet {
-            enqueueDefault(defaultPinnedOpacity, forKey: Constants.Keys.defaultPinnedOpacity)
-            NotificationCenter.default.post(name: .pinnedOpacityChanged, object: nil)
-        }
+        didSet { enqueueDefault(defaultPinnedOpacity, forKey: Constants.Keys.defaultPinnedOpacity) }
     }
 
     var hotkeyBindings: [HotkeyAction: HotkeyBinding] {
@@ -186,14 +185,6 @@ enum ImageFormat: String, CaseIterable {
         }
     }
 
-    var utType: String {
-        switch self {
-        case .png: return "public.png"
-        case .jpeg: return "public.jpeg"
-        case .tiff: return "public.tiff"
-        }
-    }
-
     var fileExtension: String { rawValue }
 }
 
@@ -218,15 +209,31 @@ enum CaptureSound: String, CaseIterable {
         }
     }
 
-    var nsSoundName: NSSound.Name {
+    /// Named system sound, or nil when the sound only exists as a file (see
+    /// `fileCandidates`).
+    var nsSoundName: NSSound.Name? {
         switch self {
-        case .cameraShot: return NSSound.Name("PhotoShutter")
+        case .cameraShot: return nil
         case .glass: return NSSound.Name("Glass")
         case .tink: return NSSound.Name("Tink")
         case .pop: return NSSound.Name("Pop")
         case .funk: return NSSound.Name("Funk")
         case .hero: return NSSound.Name("Hero")
         case .submarine: return NSSound.Name("Submarine")
+        }
+    }
+
+    /// Sound files to try before `nsSoundName`, in order. The screenshot
+    /// shutter is not in any sound library that `NSSound(named:)` searches, so
+    /// it has to be loaded from where the system keeps it, under whichever of
+    /// its file names this macOS release uses.
+    var fileCandidates: [String] {
+        switch self {
+        case .cameraShot:
+            let directory = "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system"
+            return ["\(directory)/Screen Capture.aif", "\(directory)/Grab.aif"]
+        case .glass, .tink, .pop, .funk, .hero, .submarine:
+            return []
         }
     }
 }

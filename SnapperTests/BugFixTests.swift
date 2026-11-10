@@ -199,23 +199,6 @@ final class BugFixTests: XCTestCase {
 
     // MARK: - Filename collisions
 
-    func testUniqueURLAppendsCounterOnCollision() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let url = directory.appendingPathComponent("shot.png")
-        XCTAssertEqual(FileManager.default.uniqueURL(for: url), url)
-
-        FileManager.default.createFile(atPath: url.path, contents: Data())
-        let second = FileManager.default.uniqueURL(for: url)
-        XCTAssertEqual(second.lastPathComponent, "shot 2.png")
-
-        FileManager.default.createFile(atPath: second.path, contents: Data())
-        XCTAssertEqual(FileManager.default.uniqueURL(for: url).lastPathComponent, "shot 3.png")
-    }
-
     func testAnnotatedSavePatternContainsNoPathSeparators() {
         let name = FileNameGenerator.generate(
             pattern: "Snapper Annotated {date} at {time}",

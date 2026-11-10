@@ -21,13 +21,40 @@ final class CanvasState {
     /// Installed by the canvas view so exporters can commit an in-progress
     /// inline text edit before rendering.
     @ObservationIgnored var pendingEditCommitHandler: (() -> Void)?
+    /// Backing scale of the display the capture came from (2 on Retina).
+    /// Exports carry it so an annotated capture keeps the point size of the
+    /// original instead of pasting or opening at twice the size.
+    let sourceScale: CGFloat
+    /// `undoManager.revision` at the last save or copy.
+    private(set) var savedRevision = 0
+    /// File this document was last saved to, which the next Save overwrites;
+    /// nil until the first save.
+    @ObservationIgnored var lastSavedURL: URL?
 
     var imageWidth: Int { baseImage.width }
     var imageHeight: Int { baseImage.height }
 
-    init(image: CGImage) {
+    /// True when closing the editor now would lose edits.
+    var hasUnsavedChanges: Bool {
+        // Before the first save or copy the baseline is the original capture,
+        // which undoing every edit gets back to even though the revision has
+        // moved on.
+        if savedRevision == 0, undoManager.isAtInitialState {
+            return false
+        }
+        return undoManager.revision != savedRevision
+    }
+
+    init(image: CGImage, scale: CGFloat = 1) {
         self.baseImage = image
         self.isOCRProcessing = false
+        self.sourceScale = scale.isFinite ? max(scale, 1) : 1
+    }
+
+    /// Records the current document as exported, clearing `hasUnsavedChanges`
+    /// until the next edit, undo or redo.
+    func markSaved() {
+        savedRevision = undoManager.revision
     }
 
     /// Commits any in-progress edit (e.g. inline text) so the model matches

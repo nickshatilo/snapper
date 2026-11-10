@@ -251,7 +251,7 @@ struct SettingsView: View {
                     .fontWeight(.medium)
                 TextField("Snapper {date} at {time}", text: appState.filenamePattern)
                     .textFieldStyle(.roundedBorder)
-                Text("Use placeholders like {date} and {time}.")
+                Text("Placeholders: {date}, {time}, {counter}, {app} and {type}.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -335,7 +335,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 42, alignment: .trailing)
                 }
-                Text("Applies to newly pinned screenshots and can update existing ones.")
+                Text("Sets the starting opacity for newly pinned screenshots.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -352,7 +352,7 @@ struct SettingsView: View {
                     .truncationMode(.middle)
             }
 
-            RowWithTrailingControl(title: "Storage Used") {
+            RowWithTrailingControl(title: "History Data") {
                 Text(storageSize)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -462,9 +462,15 @@ struct SettingsView: View {
                     .disabled(!updateManager.canCheckForUpdates)
             }
 
-            Text("Open source macOS screenshot tool.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text("Open source macOS screenshot tool.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let githubURL = URL(string: Constants.App.githubURL) {
+                    Link("GitHub", destination: githubURL)
+                        .font(.caption)
+                }
+            }
 
             ToggleRow(
                 title: "Automatically Check for Updates",

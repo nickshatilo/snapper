@@ -15,17 +15,23 @@ final class UndoRedoManager {
     private var redoStack: [UndoAction] = []
     @ObservationIgnored private var coalescingKey: String?
     @ObservationIgnored private var lastCoalescedRecordDate: Date = .distantPast
+    /// Set once trimming drops undo entries; from then on an empty undo stack
+    /// no longer means the document is back where it started.
+    @ObservationIgnored private var hasTrimmedUndoHistory = false
+
+    /// Increases on every change to the document history and never goes
+    /// back, so comparing against a remembered value tells whether anything
+    /// was edited, undone or redone since.
+    private(set) var revision = 0
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
     var undoCount: Int { undoStack.count }
+    /// True while undoing has returned the document to its initial contents.
+    var isAtInitialState: Bool { undoStack.isEmpty && !hasTrimmedUndoHistory }
 
     func recordAdd(annotation: any Annotation, state: CanvasState) {
         record(.add(annotation))
-    }
-
-    func recordRemove(annotation: any Annotation, index: Int, state: CanvasState) {
-        record(.remove(annotation, index: index))
     }
 
     /// Records several removals as one undo step. `removals` must be listed in
@@ -71,6 +77,7 @@ final class UndoRedoManager {
                 undoStack.removeLast()
                 coalescingKey = nil
             }
+            revision += 1
             return
         }
 
@@ -119,6 +126,7 @@ final class UndoRedoManager {
         guard case .add(let annotation)? = undoStack.last, annotation.id == id else { return false }
         undoStack.removeLast()
         coalescingKey = nil
+        revision += 1
         return true
     }
 
@@ -129,6 +137,7 @@ final class UndoRedoManager {
         guard case .add(let existing)? = undoStack.last, existing.id == annotation.id else { return false }
         undoStack[undoStack.count - 1] = .add(annotation)
         coalescingKey = nil
+        revision += 1
         return true
     }
 
@@ -145,6 +154,7 @@ final class UndoRedoManager {
         applyInverse(action, to: state)
         redoStack.append(action)
         trim(&redoStack)
+        revision += 1
     }
 
     func redo(state: CanvasState) {
@@ -152,14 +162,20 @@ final class UndoRedoManager {
         guard let action = redoStack.popLast() else { return }
         apply(action, to: state)
         undoStack.append(action)
-        trim(&undoStack)
+        if trim(&undoStack) {
+            hasTrimmedUndoHistory = true
+        }
+        revision += 1
     }
 
     private func record(_ action: UndoAction) {
         coalescingKey = nil
         undoStack.append(action)
-        trim(&undoStack)
+        if trim(&undoStack) {
+            hasTrimmedUndoHistory = true
+        }
         redoStack.removeAll(keepingCapacity: true)
+        revision += 1
     }
 
     /// Folds `changes` into an existing modification entry for the same
@@ -195,7 +211,10 @@ final class UndoRedoManager {
         }
     }
 
-    private func trim(_ stack: inout [UndoAction]) {
+    /// Returns true if any entries were dropped.
+    @discardableResult
+    private func trim(_ stack: inout [UndoAction]) -> Bool {
+        let originalCount = stack.count
         let overflow = stack.count - maxHistoryDepth
         if overflow > 0 {
             stack.removeFirst(overflow)
@@ -211,6 +230,7 @@ final class UndoRedoManager {
                 break
             }
         }
+        return stack.count < originalCount
     }
 
     private func approximateCost(of action: UndoAction) -> Int {

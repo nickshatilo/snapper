@@ -48,15 +48,6 @@ final class PinnedScreenshotManager {
             self?.persistState()
         }
         observerTokens.append(lockToken)
-
-        let opacityToken = NotificationCenter.default.addObserver(
-            forName: .pinnedOpacityChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.applyDefaultOpacityToAllPanels()
-        }
-        observerTokens.append(opacityToken)
     }
 
     func pinImage(
@@ -110,14 +101,6 @@ final class PinnedScreenshotManager {
         }
         persistWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
-    }
-
-    private func applyDefaultOpacityToAllPanels() {
-        let opacity = CGFloat(appState.defaultPinnedOpacity)
-        for (_, panel) in panels {
-            panel.currentOpacity = opacity
-        }
-        persistState()
     }
 
     private var pinsDirectory: URL? {

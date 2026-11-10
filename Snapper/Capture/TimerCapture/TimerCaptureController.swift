@@ -20,6 +20,8 @@ final class TimerCaptureController {
     private var countdownWindow: NSWindow?
     private var timer: Timer?
     private var observerToken: NSObjectProtocol?
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
 
     init(notificationCenter: NotificationCenter = .default) {
         self.notificationCenter = notificationCenter
@@ -34,9 +36,7 @@ final class TimerCaptureController {
     }
 
     deinit {
-        timer?.invalidate()
-        countdownWindow?.close()
-        countdownWindow = nil
+        cancelExistingCountdown()
         if let observerToken {
             notificationCenter.removeObserver(observerToken)
         }
@@ -53,10 +53,19 @@ final class TimerCaptureController {
     }
 
     private func cancelExistingCountdown() {
+        removeEscapeMonitors()
         timer?.invalidate()
         timer = nil
         countdownWindow?.close()
         countdownWindow = nil
+    }
+
+    /// Abandons the running countdown. A nil mode tells the capture
+    /// coordinator to release the reservation it made for this capture.
+    private func cancelCountdown() {
+        guard timer != nil else { return }
+        cancelExistingCountdown()
+        notificationCenter.post(name: .timerCaptureDidFinish, object: nil)
     }
 
     @discardableResult
@@ -70,6 +79,9 @@ final class TimerCaptureController {
             defer: false,
             screen: screen
         )
+        // The window is closed while `countdownWindow` still holds it; the
+        // AppKit default (release on close) would then release it twice.
+        window.isReleasedWhenClosed = false
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -81,20 +93,49 @@ final class TimerCaptureController {
         countdownWindow = window
 
         var remaining = seconds
-        countdownView.setCountdown(remaining)
+        countdownView.setCountdown(remaining, total: seconds)
 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             remaining -= 1
             if remaining <= 0 {
                 timer.invalidate()
-                self?.timer = nil
-                self?.countdownWindow?.close()
-                self?.countdownWindow = nil
+                self?.cancelExistingCountdown()
                 completion()
             } else {
-                countdownView.setCountdown(remaining)
+                countdownView.setCountdown(remaining, total: seconds)
             }
         }
+        installEscapeMonitors()
         return true
+    }
+
+    /// Escape cancels the countdown. Another app is usually frontmost while
+    /// it runs, so this needs a global monitor (delivered only when Snapper is
+    /// trusted for Accessibility); the local one covers Snapper itself being
+    /// active.
+    private func installEscapeMonitors() {
+        removeEscapeMonitors()
+        let escapeKeyCode: UInt16 = 53
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == escapeKeyCode {
+                self?.cancelCountdown()
+            }
+        }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == escapeKeyCode, let self, self.timer != nil else { return event }
+            self.cancelCountdown()
+            return nil
+        }
+    }
+
+    private func removeEscapeMonitors() {
+        if let globalKeyMonitor {
+            NSEvent.removeMonitor(globalKeyMonitor)
+            self.globalKeyMonitor = nil
+        }
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+            self.localKeyMonitor = nil
+        }
     }
 }

@@ -191,57 +191,21 @@ struct AnnotationEditorView: View {
     }
 
     private func exportToClipboard() {
-        // Commit an in-progress inline text edit so the export matches the screen.
-        canvasState.commitPendingEdits()
-        guard let image = canvasState.renderFinalImage() else { return }
-        PasteboardHelper.copyImage(
-            image,
-            showsConfirmation: true,
-            confirmationScreen: NSApp.keyWindow?.screen
-        )
+        EditorExporter.copyToClipboard(canvasState, screen: NSApp.keyWindow?.screen)
     }
 
     private func exportSave() {
-        // Commit an in-progress inline text edit so the export matches the screen.
-        canvasState.commitPendingEdits()
-        guard let image = canvasState.renderFinalImage(),
-              let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
-            return
-        }
-        // FileNameGenerator sanitizes path-hostile characters; a raw formatted
-        // date contains "/" in most locales, which turns the filename into a
-        // nonexistent directory path and makes the save silently fail.
-        let filename = FileNameGenerator.generate(
-            pattern: "Snapper Annotated {date} at {time}",
-            mode: .area
-        )
-        let url = FileManager.default.uniqueURL(
-            for: desktop.appendingPathComponent(filename).appendingPathExtension("png")
-        )
-        saveOrAlert(image, to: url, format: .png)
+        EditorExporter.save(canvasState, options: saveOptions())
     }
 
     private func exportSaveAs() {
-        // Commit an in-progress inline text edit so the export matches the screen.
-        canvasState.commitPendingEdits()
-        guard let image = canvasState.renderFinalImage() else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png, .jpeg, .tiff]
-        panel.nameFieldStringValue = "Annotated Screenshot.png"
-        if panel.runModal() == .OK, let url = panel.url {
-            let ext = url.pathExtension.lowercased()
-            let format: ImageFormat = ext == "jpg" || ext == "jpeg" ? .jpeg : ext == "tiff" ? .tiff : .png
-            saveOrAlert(image, to: url, format: format)
-        }
+        EditorExporter.saveAs(canvasState, jpegQuality: saveOptions().jpegQuality)
     }
 
-    private func saveOrAlert(_ image: CGImage, to url: URL, format: ImageFormat) {
-        guard !ImageUtils.save(image, to: url, format: format) else { return }
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Save Failed"
-        alert.informativeText = "Couldn't save the image to \(url.path)."
-        alert.runModal()
+    /// The user's current save settings, read at export time so changes made
+    /// while the editor is open apply.
+    private func saveOptions() -> CaptureOptions {
+        AnnotationEditorWindow.saveOptionsProvider?() ?? CaptureOptions()
     }
 
 }

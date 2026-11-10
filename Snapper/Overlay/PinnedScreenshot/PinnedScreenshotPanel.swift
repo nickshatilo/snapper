@@ -134,21 +134,20 @@ final class PinnedScreenshotPanel: NSPanel {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.png]
         savePanel.nameFieldStringValue = "Pinned Screenshot.png"
-        if savePanel.runModal() == .OK, let url = savePanel.url,
-           let imageView = contentView as? NSImageView, let image = imageView.image,
-           let tiffData = image.tiffRepresentation,
-           let bitmapRep = NSBitmapImageRep(data: tiffData),
-           let pngData = bitmapRep.representation(using: .png, properties: [:]) {
-            try? pngData.write(to: url)
-        }
+        guard savePanel.runModal() == .OK, let url = savePanel.url else { return }
+        // Write the captured pixels with their scale rather than re-encoding
+        // the view's image, which drops the DPI and saves a retina pin at 2x.
+        guard !ImageUtils.save(sourceImage, to: url, format: .png, scale: sourceScale) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Save Failed"
+        alert.informativeText = "Couldn't save the image to \(url.path)."
+        alert.runModal()
     }
 
     @objc private func annotateImage() {
-        if let imageView = contentView as? NSImageView, let image = imageView.image,
-           let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(cgImage))
-            closePanel()
-        }
+        NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(sourceImage, scale: sourceScale))
+        closePanel()
     }
 
     @objc private func toggleLock() {

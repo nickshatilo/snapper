@@ -259,18 +259,21 @@ final class HistoryManager {
         return (try? modelContainer.mainContext.fetch(descriptor)) ?? []
     }
 
-    @MainActor
-    func search(query: String) -> [CaptureRecord] {
-        let predicate = #Predicate<CaptureRecord> {
-            $0.ocrText?.localizedStandardContains(query) == true ||
-            $0.applicationName?.localizedStandardContains(query) == true ||
-            $0.captureType.localizedStandardContains(query)
+    /// Points a record at the file its capture was saved to after the fact
+    /// (captures taken with "Save to File" off start out with no file).
+    func updateFile(recordID: UUID, url: URL, fileSize: Int) {
+        let filePath = url.path
+        let resolvedFileSize = max(0, fileSize)
+        DispatchQueue.main.async { [modelContainer] in
+            let predicate = #Predicate<CaptureRecord> { $0.id == recordID }
+            let descriptor = FetchDescriptor<CaptureRecord>(predicate: predicate)
+            guard let record = try? modelContainer.mainContext.fetch(descriptor).first else { return }
+
+            record.filePath = filePath
+            record.fileSize = resolvedFileSize
+            try? modelContainer.mainContext.save()
+            NotificationCenter.default.post(name: .historyDidChange, object: nil)
         }
-        let descriptor = FetchDescriptor<CaptureRecord>(
-            predicate: predicate,
-            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
-        )
-        return (try? modelContainer.mainContext.fetch(descriptor)) ?? []
     }
 
     func delete(_ record: CaptureRecord) {
@@ -307,12 +310,6 @@ final class HistoryManager {
         }
     }
 
-    @MainActor
-    func totalStorageSize() -> Int {
-        let records = fetchAll()
-        return records.reduce(0) { $0 + $1.fileSize }
-    }
-
     func clearAll() {
         DispatchQueue.main.async { [modelContainer] in
             let descriptor = FetchDescriptor<CaptureRecord>()
@@ -334,6 +331,15 @@ final class HistoryManager {
     }
 }
 
+/// Posted as the object of `.historyRecordFileSaved` when a capture that had
+/// no file on disk is saved.
+struct HistoryFileUpdate {
+    let recordID: UUID
+    let url: URL
+    let fileSize: Int
+}
+
 extension Notification.Name {
     static let historyDidChange = Notification.Name("historyDidChange")
+    static let historyRecordFileSaved = Notification.Name("historyRecordFileSaved")
 }

@@ -66,9 +66,15 @@ struct CaptureThumbnailView: View {
                     )
                 }
             }
-            OverlayIconButton(icon: "square.and.arrow.down", tooltip: "Reveal File") {
-                if let url = capture.savedURL {
+            // With "Save to File" off the capture only lives in memory, so
+            // there is nothing to reveal yet; offer to save it instead.
+            if let url = capture.savedURL {
+                OverlayIconButton(icon: "folder", tooltip: "Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            } else {
+                OverlayIconButton(icon: "square.and.arrow.down", tooltip: "Save…") {
+                    saveToFile()
                 }
             }
             OverlayIconButton(icon: "pin", tooltip: "Pin") {
@@ -86,7 +92,8 @@ struct CaptureThumbnailView: View {
             OverlayIconButton(icon: "trash", tooltip: "Delete") {
                 manager.removeCapture(capture.id)
                 if let url = capture.savedURL {
-                    try? FileManager.default.removeItem(at: url)
+                    // The Trash keeps an accidental click recoverable.
+                    try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
                 }
                 NotificationCenter.default.post(name: .deleteHistoryRecord, object: capture.recordID)
             }
@@ -134,10 +141,51 @@ struct CaptureThumbnailView: View {
 
     private func openInEditorAndDismiss() {
         guard let image = capture.resolvedImage() else { return }
-        NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(image))
+        NotificationCenter.default.post(name: .openEditor, object: ImageWrapper(image, scale: capture.scale))
         manager.removeCapture(capture.id)
     }
 
+    private func saveToFile() {
+        guard let image = capture.resolvedImage() else { return }
+        // The overlay is a non-activating panel; without activating the app
+        // the save panel can open behind the frontmost app's windows.
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png, .jpeg, .tiff]
+        panel.nameFieldStringValue = defaultSaveName
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let format: ImageFormat
+        switch url.pathExtension.lowercased() {
+        case "jpg", "jpeg": format = .jpeg
+        case "tiff", "tif": format = .tiff
+        default: format = .png
+        }
+        guard ImageUtils.save(image, to: url, format: format, scale: capture.scale) else {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Save Failed"
+            alert.informativeText = "Couldn't save the image to \(url.path)."
+            alert.runModal()
+            return
+        }
+
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        manager.markSaved(id: capture.id, url: url, fileSize: fileSize)
+        NotificationCenter.default.post(
+            name: .historyRecordFileSaved,
+            object: HistoryFileUpdate(recordID: capture.recordID, url: url, fileSize: fileSize)
+        )
+    }
+
+    /// Named after when the capture was taken, not when it is saved, in the
+    /// same shape as the default automatic file name.
+    private var defaultSaveName: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        return "Snapper \(formatter.string(from: capture.timestamp)).png"
+    }
 }
 
 private struct OverlayIconButton: View {
