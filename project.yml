@@ -7,10 +7,10 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.8.0"
+    MARKETING_VERSION: "1.9.0"
     # major*10000 + minor*100 + patch. Sparkle orders updates by this number;
     # the release workflow refuses to build if it doesn't match the version.
-    CURRENT_PROJECT_VERSION: "10800"
+    CURRENT_PROJECT_VERSION: "10900"
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
