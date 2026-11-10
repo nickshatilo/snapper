@@ -32,6 +32,7 @@ final class OCRCaptureController {
             self.areaSelectorController = nil
 
             guard let selection else {
+                // The selector hands focus back itself when it is cancelled.
                 NotificationCenter.default.post(name: .ocrCaptureDidFinish, object: nil)
                 return
             }
@@ -40,8 +41,8 @@ final class OCRCaptureController {
             let cgRect = CoordinateSpace.appKitToCG(rect)
 
             Task {
+                let image: CGImage
                 do {
-                    let image: CGImage
                     if let frozenImage = selection.frozenImage {
                         image = frozenImage
                     } else {
@@ -49,10 +50,6 @@ final class OCRCaptureController {
                             cgRect,
                             retinaScale: options?.retina2x ?? true
                         )
-                    }
-                    await MainActor.run {
-                        AnnotationEditorWindow.open(with: image)
-                        NotificationCenter.default.post(name: .ocrCaptureDidFinish, object: nil)
                     }
                 } catch {
                     await MainActor.run {
@@ -64,11 +61,32 @@ final class OCRCaptureController {
                         }
                         return
                     }
-                    // No editor opened, so hand focus back to the user's app.
+                    print("OCR capture failed: \(error)")
                     await MainActor.run {
                         selection.focusRestorer?.restore()
+                        CaptureFailureAlert.presentCaptureFailure(error, context: "OCR capture")
                     }
-                    print("OCR capture failed: \(error)")
+                    return
+                }
+
+                // Nothing of Snapper's opens for an OCR capture, and recognition
+                // can take a moment, so hand focus back before it starts.
+                await MainActor.run {
+                    selection.focusRestorer?.restore()
+                }
+
+                let recognized = try? await TextRecognitionService.recognizeText(in: image)
+                let text = recognized?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                await MainActor.run {
+                    let center = CGPoint(x: rect.midX, y: rect.midY)
+                    let screen = NSScreen.screens.first { $0.frame.contains(center) }
+                    if text.isEmpty {
+                        PasteboardHelper.showStatus("No text found", systemImage: "text.viewfinder", on: screen)
+                    } else {
+                        PasteboardHelper.copyText(text, showsConfirmation: true, confirmationScreen: screen)
+                    }
+                    NotificationCenter.default.post(name: .ocrCaptureDidFinish, object: nil)
                 }
             }
         }

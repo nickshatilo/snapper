@@ -41,13 +41,9 @@ enum TextRecognitionService {
                         scaleToOriginal: scaleToOriginal
                     )
                 }
-                    .sorted { lhs, rhs in
-                        let yDelta = lhs.imageRect.midY - rhs.imageRect.midY
-                        if abs(yDelta) > 6 { return yDelta > 0 }
-                        return lhs.imageRect.minX < rhs.imageRect.minX
-                    }
+                let readingOrder = lines(from: recognizedBlocks).flatMap { $0 }
 
-                resume(.success(Array(recognizedBlocks.prefix(2000))))
+                resume(.success(Array(readingOrder.prefix(2000))))
             }
 
             request.recognitionLevel = .accurate
@@ -71,6 +67,89 @@ enum TextRecognitionService {
     static func recognizeText(in image: CGImage) async throws -> String {
         let blocks = try await recognizeTextBlocks(in: image)
         return composeText(from: blocks)
+    }
+
+    /// Ranges of the maximal runs of non-whitespace characters. Splitting on
+    /// whitespace rather than word boundaries keeps punctuation attached, so
+    /// "Hello," and URLs survive as written.
+    static func tokenRanges(in text: String) -> [Range<String.Index>] {
+        var ranges: [Range<String.Index>] = []
+        var tokenStart: String.Index?
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            if text[index].isWhitespace {
+                if let start = tokenStart {
+                    ranges.append(start..<index)
+                    tokenStart = nil
+                }
+            } else if tokenStart == nil {
+                tokenStart = index
+            }
+            index = text.index(after: index)
+        }
+        if let start = tokenStart {
+            ranges.append(start..<text.endIndex)
+        }
+
+        return ranges
+    }
+
+    /// Groups blocks into text lines, top-to-bottom, each ordered left-to-right.
+    /// Image rects are y-up, so a larger midY is higher on the page.
+    static func lines(from blocks: [OCRTextBlock]) -> [[OCRTextBlock]] {
+        let topToBottom = blocks.sorted { lhs, rhs in
+            if lhs.imageRect.midY != rhs.imageRect.midY {
+                return lhs.imageRect.midY > rhs.imageRect.midY
+            }
+            return lhs.imageRect.minX < rhs.imageRect.minX
+        }
+
+        var grouped: [[OCRTextBlock]] = []
+        var currentLine: [OCRTextBlock] = []
+        // Mean centre of the current line. Comparing against it, rather than
+        // the previous block, stops a run of slightly descending blocks from
+        // chaining two lines together.
+        var referenceMidY: CGFloat = 0
+        var minHeight: CGFloat = 0
+
+        for block in topToBottom {
+            let rect = block.imageRect
+            if !currentLine.isEmpty {
+                let tolerance = max(5, min(minHeight, rect.height) * 0.65)
+                if abs(referenceMidY - rect.midY) <= tolerance {
+                    let count = CGFloat(currentLine.count)
+                    referenceMidY = (referenceMidY * count + rect.midY) / (count + 1)
+                    minHeight = min(minHeight, rect.height)
+                    currentLine.append(block)
+                    continue
+                }
+                grouped.append(currentLine)
+            }
+            currentLine = [block]
+            referenceMidY = rect.midY
+            minHeight = rect.height
+        }
+        if !currentLine.isEmpty {
+            grouped.append(currentLine)
+        }
+
+        return grouped.map { line in
+            line.sorted { lhs, rhs in
+                if lhs.imageRect.minX != rhs.imageRect.minX {
+                    return lhs.imageRect.minX < rhs.imageRect.minX
+                }
+                return lhs.imageRect.midY > rhs.imageRect.midY
+            }
+        }
+    }
+
+    /// Blocks in reading order: words on a line separated by a space, lines by
+    /// a newline.
+    static func composeText(from blocks: [OCRTextBlock]) -> String {
+        lines(from: blocks)
+            .map { line in line.map(\.text).joined(separator: " ") }
+            .joined(separator: "\n")
     }
 
     private static func downscaledImageIfNeeded(_ image: CGImage) -> (image: CGImage, scale: CGFloat)? {
@@ -120,14 +199,14 @@ enum TextRecognitionService {
         ocrHeight: CGFloat,
         scaleToOriginal: CGFloat
     ) -> [OCRTextBlock] {
-        let wordLevel = wordBlocks(
+        let tokenLevel = tokenBlocks(
             from: observation,
             imageWidth: ocrWidth,
             imageHeight: ocrHeight,
             scaleToOriginal: scaleToOriginal
         )
-        if !wordLevel.isEmpty {
-            return wordLevel
+        if !tokenLevel.isEmpty {
+            return tokenLevel
         }
 
         guard let lineLevel = lineBlock(
@@ -161,7 +240,7 @@ enum TextRecognitionService {
         return OCRTextBlock(text: text, imageRect: rect)
     }
 
-    private static func wordBlocks(
+    private static func tokenBlocks(
         from observation: VNRecognizedTextObservation,
         imageWidth: CGFloat,
         imageHeight: CGFloat,
@@ -170,17 +249,12 @@ enum TextRecognitionService {
         guard let candidate = observation.topCandidates(1).first else { return [] }
 
         let fullText = candidate.string
-        let nsRange = NSRange(location: 0, length: (fullText as NSString).length)
         var blocks: [OCRTextBlock] = []
 
-        (fullText as NSString).enumerateSubstrings(
-            in: nsRange,
-            options: [.byWords, .substringNotRequired]
-        ) { _, wordRange, _, _ in
-            guard let swiftRange = Range(wordRange, in: fullText) else { return }
-            let word = fullText[swiftRange].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !word.isEmpty else { return }
-            guard let box = try? candidate.boundingBox(for: swiftRange) else { return }
+        // A token without a usable box would silently drop its text; give up
+        // on token-level blocks so the caller falls back to the whole line.
+        for range in tokenRanges(in: fullText) {
+            guard let box = try? candidate.boundingBox(for: range) else { return [] }
 
             let rect = imageRect(
                 from: box.boundingBox,
@@ -188,39 +262,10 @@ enum TextRecognitionService {
                 height: imageHeight,
                 scaleToOriginal: scaleToOriginal
             )
-            guard rect.width > 1, rect.height > 1 else { return }
-            blocks.append(OCRTextBlock(text: word, imageRect: rect))
+            guard rect.width > 1, rect.height > 1 else { return [] }
+            blocks.append(OCRTextBlock(text: String(fullText[range]), imageRect: rect))
         }
 
         return blocks
-    }
-
-    private static func composeText(from blocks: [OCRTextBlock]) -> String {
-        guard !blocks.isEmpty else { return "" }
-
-        let sorted = blocks.sorted {
-            let yDelta = $0.imageRect.midY - $1.imageRect.midY
-            if abs(yDelta) > 6 { return yDelta > 0 }
-            return $0.imageRect.minX < $1.imageRect.minX
-        }
-
-        var result = ""
-        var previous: OCRTextBlock?
-
-        for block in sorted {
-            if let prev = previous {
-                let sameLine = abs(prev.imageRect.midY - block.imageRect.midY) <=
-                    max(5, min(prev.imageRect.height, block.imageRect.height) * 0.65)
-                if sameLine {
-                    result.append(" ")
-                } else {
-                    result.append("\n")
-                }
-            }
-            result.append(block.text)
-            previous = block
-        }
-
-        return result
     }
 }

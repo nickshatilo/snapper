@@ -548,7 +548,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        if event.modifierFlags.contains(.command) || event.hasPreciseScrollingDeltas {
+        if event.modifierFlags.contains(.command) {
             let delta = event.scrollingDeltaY * 0.01
             let viewPoint = convert(event.locationInWindow, from: nil)
             zoom(by: 1 + delta, around: viewPoint)
@@ -2075,35 +2075,7 @@ final class CanvasNSView: NSView, NSTextFieldDelegate {
     private func selectedText() -> String {
         let selectedBlocks = recognizedTextBlocks
             .filter { selectedTextBlockIDs.contains($0.id) }
-
-        guard !selectedBlocks.isEmpty else { return "" }
-
-        let sortedBlocks = selectedBlocks.sorted {
-            let lhsRect = $0.imageRect
-            let rhsRect = $1.imageRect
-            let yDelta = lhsRect.midY - rhsRect.midY
-            if abs(yDelta) > 6 {
-                return yDelta > 0
-            }
-            return lhsRect.minX < rhsRect.minX
-        }
-
-        var output = ""
-        var previous: OCRTextBlock?
-
-        for block in sortedBlocks {
-            if let previous {
-                let previousRect = previous.imageRect
-                let currentRect = block.imageRect
-                let sameLine = abs(previousRect.midY - currentRect.midY) <=
-                    max(5, min(previousRect.height, currentRect.height) * 0.65)
-                output.append(sameLine ? " " : "\n")
-            }
-            output.append(block.text)
-            previous = block
-        }
-
-        return output
+        return TextRecognitionService.composeText(from: selectedBlocks)
     }
 
     private func drawTextSelectionOverlay(in context: CGContext, imageRect: CGRect) {
