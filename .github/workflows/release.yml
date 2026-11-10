@@ -49,8 +49,25 @@ jobs:
             exit 1
           fi
 
+          # Sparkle orders updates by CFBundleVersion, so the build number must
+          # be the same for CI and local builds and must only ever grow. It is
+          # derived from the version (major*10000 + minor*100 + patch) and
+          # project.yml has to carry the same value.
+          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          if [ "$MINOR" -gt 99 ] || [ "$PATCH" -gt 99 ]; then
+            echo "Minor and patch must be below 100 to derive the build number: $VERSION" >&2
+            exit 1
+          fi
+          BUILD=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
+          PROJECT_BUILD="$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION: "\(.*\)"/\1/p' project.yml | head -n1)"
+          if [ "$PROJECT_BUILD" != "$BUILD" ]; then
+            echo "CURRENT_PROJECT_VERSION in project.yml is '$PROJECT_BUILD' but version $VERSION requires $BUILD" >&2
+            exit 1
+          fi
+
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "BUILD=$BUILD" >> $GITHUB_OUTPUT
 
       - name: Require Sparkle signing key
         env:
@@ -127,7 +144,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/build" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" \
             MARKETING_VERSION="${{ steps.version.outputs.VERSION }}" \
-            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.BUILD }}" \
             "${SIGN_FLAGS[@]}"
 
       - name: Sign for distribution
@@ -287,6 +304,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.TAG }}
+          # A manually dispatched run creates the tag here; pin it to the commit
+          # that was built instead of the default branch's head.
+          target_commitish: ${{ github.sha }}
           name: Snapper ${{ steps.version.outputs.VERSION }}
           body_path: release-notes.md
           files: |
